@@ -112,6 +112,87 @@ export function buildReadMarkerMutation(input: ReadMarkerInput): MutationClientM
   });
 }
 
+export interface DeleteMutationInput {
+  chatId: string;
+  /** Метка удаляемого сообщения (мкс, строка) */
+  timestamp: string;
+}
+
+/**
+ * Удаление своего сообщения (§9.3): пустой `Plain{ChatId, Timestamp}` без content-поля.
+ * Именно отсутствие content при наличии `Timestamp` целевого сообщения = «удалить это»
+ * (детект при чтении - `ServerMessageInfo.Deleted=true`, §9.1). Серверный `DUPLICATE(8)`
+ * на повторе НЕ обещается (target-путь, см. шапку confirm.ts).
+ *
+ * `push({ Plain:{ChatId, Timestamp} })` внутри полного конверта.
+ */
+export function buildDeleteMutation(input: DeleteMutationInput): MutationClientMessage {
+  return asMutation({
+    Plain: {
+      ChatId: input.chatId,
+      Timestamp: input.timestamp,
+    },
+  });
+}
+
+export interface EditMutationInput {
+  chatId: string;
+  /** Метка правимого сообщения (мкс, строка) */
+  timestamp: string;
+  /** Новый текст */
+  text: string;
+}
+
+/**
+ * Правка своего сообщения (§9.3): `convertMessageToPlain` + `Timestamp` целевого сообщения.
+ * Тот же `Plain` с новым `Text`, но с проставленным `Timestamp` = «переписать это сообщение»,
+ * а не отправить новое (детект при чтении - непустой `LastEditTimestamp`, §9.1). Серверный
+ * `DUPLICATE(8)` на повторе НЕ обещается (target-путь).
+ *
+ * `push({ Plain:{ChatId, Timestamp, Text:{MessageText}} })` внутри полного конверта.
+ */
+export function buildEditMutation(input: EditMutationInput): MutationClientMessage {
+  return asMutation({
+    Plain: {
+      ChatId: input.chatId,
+      Timestamp: input.timestamp,
+      Text: { MessageText: input.text },
+    },
+  });
+}
+
+export interface VoteMutationInput {
+  chatId: string;
+  /** Метка сообщения-опроса (мкс, строка) */
+  timestamp: string;
+  /** Выбранные варианты. Единица (индекс/id) и обязательность ДОКО-ВЫВЕДЕНЫ (§11.4) */
+  choices: number[];
+}
+
+/**
+ * Голос в опросе (§9.3/§11.4). ⚠️ ФОРМА ДОКО-ВЫВЕДЕНА, живьём НЕ наблюдалась: единица
+ * `Choices` (индекс варианта? id?) и семантика `Results` неизвестны, голос в self-чате
+ * отправкой не проверить (создание опроса - Non-Goal). Инструмент `vote_in_poll` выпускается
+ * experimental, его выдача несёт `form_status: experimental_unverified`. Механики снятия/смены
+ * голоса в протоколе не обнаружено - отсюда confirm. Заменяется одной правкой билдера, если
+ * живой прогон уточнит форму.
+ *
+ * `Results:true` - доко-выведенная просьба вернуть результаты после голоса (аналог
+ * `poll_info.ReturnResults`); значение живьём не подтверждено.
+ *
+ * `push({ Vote:{ChatId, Timestamp, Choices, Results} })` внутри полного конверта.
+ */
+export function buildVoteMutation(input: VoteMutationInput): MutationClientMessage {
+  return asMutation({
+    Vote: {
+      ChatId: input.chatId,
+      Timestamp: input.timestamp,
+      Choices: input.choices,
+      Results: true,
+    },
+  });
+}
+
 /** Минимум транспорта для одноразовой мутации: без confirm, без ретрая push (§14.4) */
 export interface MutationTransport {
   ws: Pick<MessengerWsClient, 'request' | 'waitForSubscriptionId'>;

@@ -5,9 +5,12 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  buildDeleteMutation,
+  buildEditMutation,
   buildPinMutation,
   buildReactionMutation,
   buildReadMarkerMutation,
+  buildVoteMutation,
   REACTION_ACTION_REMOVE,
   type MutationClientMessage,
 } from '../../src/protocol/mutations.js';
@@ -55,6 +58,41 @@ describe('buildReadMarkerMutation (§9.3, выбран SeenMarker - доко-в�
   });
 });
 
+describe('buildDeleteMutation (§9.3): пустой Plain с меткой', () => {
+  it('удаление = Plain{ChatId, Timestamp} БЕЗ content-поля', () => {
+    const message = buildDeleteMutation({ chatId: CHAT, timestamp: TS });
+    expect(message).toEqual({ Plain: { ChatId: CHAT, Timestamp: TS } });
+    /* Content-поля нет - именно это отличает удаление от отправки (§9.2) */
+    const plain = (message as unknown as { Plain: Record<string, unknown> }).Plain;
+    expect(plain).not.toHaveProperty('Text');
+    expect(typeof plain['Timestamp']).toBe('string');
+  });
+});
+
+describe('buildEditMutation (§9.3): convertMessageToPlain + Timestamp', () => {
+  it('правка = Plain{ChatId, Timestamp, Text:{MessageText}} с меткой целевого', () => {
+    const message = buildEditMutation({ chatId: CHAT, timestamp: TS, text: 'новый' });
+    expect(message).toEqual({ Plain: { ChatId: CHAT, Timestamp: TS, Text: { MessageText: 'новый' } } });
+    /* Timestamp присутствует - именно он превращает Plain из «новое сообщение» в «правка» */
+    const plain = (message as unknown as { Plain: { Timestamp: unknown } }).Plain;
+    expect(typeof plain.Timestamp).toBe('string');
+  });
+});
+
+describe('buildVoteMutation (§9.3/§11.4, форма ДОКО-ВЫВЕДЕНА, experimental)', () => {
+  it('голос = Vote{ChatId, Timestamp, Choices, Results:true}', () => {
+    const message = buildVoteMutation({ chatId: CHAT, timestamp: TS, choices: [0, 2] });
+    expect(message).toEqual({ Vote: { ChatId: CHAT, Timestamp: TS, Choices: [0, 2], Results: true } });
+  });
+
+  it('Choices проходят как есть (единица доко-выведена), метка строкой', () => {
+    const message = buildVoteMutation({ chatId: CHAT, timestamp: TS, choices: [1] });
+    const vote = (message as unknown as { Vote: { Choices: unknown; Timestamp: unknown } }).Vote;
+    expect(vote.Choices).toEqual([1]);
+    expect(typeof vote.Timestamp).toBe('string');
+  });
+});
+
 describe('форма запроса: вариант уходит ВНУТРИ ClientMessage, не плоско', () => {
   it('через buildPushParams вариант оказывается в ClientMessage рядом с LogData, а НЕ top-level', () => {
     const params = buildPushParams({
@@ -73,6 +111,26 @@ describe('форма запроса: вариант уходит ВНУТРИ Cl
       Reaction: { ChatId: CHAT, Timestamp: TS, Type: 100102 },
       LogData: { YandexUid: '1234567890123456789' },
     });
+  });
+
+  it('delete/edit/vote тоже уходят ВНУТРИ ClientMessage (тот же брендированный путь)', () => {
+    const del = buildPushParams({
+      clientMessage: buildDeleteMutation({ chatId: CHAT, timestamp: TS }) as unknown as Record<string, unknown>,
+      subscriptionId: SUBSCRIPTION_ID,
+      yandexUid: '1',
+      serviceId: 27,
+    });
+    expect(del).not.toHaveProperty('Plain');
+    expect(del.ClientMessage).toMatchObject({ Plain: { ChatId: CHAT, Timestamp: TS }, LogData: { YandexUid: '1' } });
+
+    const vote = buildPushParams({
+      clientMessage: buildVoteMutation({ chatId: CHAT, timestamp: TS, choices: [0] }) as unknown as Record<string, unknown>,
+      subscriptionId: SUBSCRIPTION_ID,
+      yandexUid: '1',
+      serviceId: 27,
+    });
+    expect(vote).not.toHaveProperty('Vote');
+    expect(vote.ClientMessage).toMatchObject({ Vote: { ChatId: CHAT, Timestamp: TS, Choices: [0] } });
   });
 
   it('type-level: плоский литерал НЕ является MutationClientMessage (брендированный тип)', () => {

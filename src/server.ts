@@ -5,10 +5,13 @@ import { ATTACHMENT_SIZES } from './attachments/downloadUrl.js';
 import { SEARCH_ENTITIES } from './config/defaults.js';
 import type { Config } from './config/types.js';
 import type { ToolDeps } from './mcp/tools/deps.js';
+import { deleteMessage } from './mcp/tools/deleteMessage.js';
 import { downloadAttachment } from './mcp/tools/downloadAttachment.js';
+import { editMessage } from './mcp/tools/editMessage.js';
 import { getHistory, DEFAULT_HISTORY_LIMIT } from './mcp/tools/getHistory.js';
 import { getMessage } from './mcp/tools/getMessage.js';
 import { getMessageContext, DEFAULT_CONTEXT_WINDOW } from './mcp/tools/getMessageContext.js';
+import { getPoll } from './mcp/tools/getPoll.js';
 import { getThread, DEFAULT_THREAD_LIMIT } from './mcp/tools/getThread.js';
 import { listChats } from './mcp/tools/listChats.js';
 import { markRead } from './mcp/tools/markRead.js';
@@ -17,6 +20,7 @@ import { joinThread, leaveThread } from './protocol/threads.js';
 import { search } from './mcp/tools/search.js';
 import { sendMessage } from './mcp/tools/sendMessage.js';
 import { setReaction } from './mcp/tools/setReaction.js';
+import { voteInPoll } from './mcp/tools/voteInPoll.js';
 import type { Logger } from './util/logger.js';
 
 export const SERVER_NAME = 'yandex-messenger-mcp';
@@ -34,6 +38,10 @@ export const TOOL_NAMES = [
   'set_reaction',
   'mark_read',
   'pin_message',
+  'delete_message',
+  'edit_message',
+  'get_poll',
+  'vote_in_poll',
   'download_attachment',
   'join_to_thread',
   'leave_thread',
@@ -428,6 +436,145 @@ export function createServer(options: CreateServerOptions): McpServer {
         return jsonResult(await pinMessage(deps, args));
       } catch (error) {
         return errorResult('pin_message', error, logger);
+      }
+    },
+  );
+
+  server.registerTool(
+    'delete_message',
+    {
+      title: 'Delete message',
+      description:
+        'Удаление своего сообщения в два шага: без confirm возвращает превью удаляемого (draft, автор/время/текст) ' +
+        'и НЕ удаляет; с confirm:true и confirm_token из превью удаляет. Удаление необратимо, ' +
+        'поэтому чат и message_id на шаге confirm сверяются с подтверждёнными; расхождение отклоняется. ' +
+        'Удаление чужого сообщения отклоняет сервер. После удаления сообщение читается с deleted:true.',
+      inputSchema: {
+        chat: z.string().min(1).describe('ChatId либо поисковый запрос для резолва чата'),
+        message_id: z
+          .string()
+          .regex(/^\d+$/)
+          .describe('Timestamp удаляемого сообщения в микросекундах (строка)'),
+        confirm: z
+          .boolean()
+          .optional()
+          .describe('false/отсутствует - вернуть draft-превью; true - удалить (необратимо)'),
+        confirm_token: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Токен из draft-превью. Обязателен при confirm:true'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
+    },
+    async (args) => {
+      try {
+        return jsonResult(await deleteMessage(deps, args));
+      } catch (error) {
+        return errorResult('delete_message', error, logger);
+      }
+    },
+  );
+
+  server.registerTool(
+    'edit_message',
+    {
+      title: 'Edit message',
+      description:
+        'Правка своего сообщения в два шага: без confirm возвращает превью «было -> станет» (draft) и НЕ правит; ' +
+        'с confirm:true и confirm_token из превью правит. Правка необратима, поэтому чат, message_id и new_text ' +
+        'на шаге confirm сверяются с подтверждёнными; расхождение отклоняется. Правку чужого сообщения отклоняет ' +
+        'сервер. После правки сообщение читается с новым текстом и непустым LastEditTimestamp.',
+      inputSchema: {
+        chat: z.string().min(1).describe('ChatId либо поисковый запрос для резолва чата'),
+        message_id: z
+          .string()
+          .regex(/^\d+$/)
+          .describe('Timestamp правимого сообщения в микросекундах (строка)'),
+        new_text: z.string().min(1).describe('Новый текст сообщения'),
+        confirm: z
+          .boolean()
+          .optional()
+          .describe('false/отсутствует - вернуть draft-превью; true - применить правку (необратимо)'),
+        confirm_token: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Токен из draft-превью. Обязателен при confirm:true'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
+    },
+    async (args) => {
+      try {
+        return jsonResult(await editMessage(deps, args));
+      } catch (error) {
+        return errorResult('edit_message', error, logger);
+      }
+    },
+  );
+
+  server.registerTool(
+    'get_poll',
+    {
+      title: 'Get poll',
+      description:
+        'Читает опрос по chat + message_id (message_id = timestamp в микросекундах) через poll_info, без confirm. ' +
+        'Возвращает варианты (answer_votes), мой выбор (my_choices) и результаты (results). Признак «это опрос» ' +
+        'виден полем is_poll (в обычной выдаче сообщения - kind:poll). Если сообщение не опрос - статус not_a_poll.',
+      inputSchema: {
+        chat: z.string().min(1).describe('ChatId либо поисковый запрос для резолва чата'),
+        message_id: z
+          .string()
+          .regex(/^\d+$/)
+          .describe('Timestamp сообщения-опроса в микросекундах (строка)'),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      try {
+        return jsonResult(await getPoll(deps, args));
+      } catch (error) {
+        return errorResult('get_poll', error, logger);
+      }
+    },
+  );
+
+  server.registerTool(
+    'vote_in_poll',
+    {
+      title: 'Vote in poll',
+      description:
+        'Голос в опросе в два шага (draft->confirm). EXPERIMENTAL: форма Vote доко-выведена и живьём НЕ проверена, ' +
+        'поэтому выдача draft И confirm несёт form_status: experimental_unverified. Без confirm возвращает draft ' +
+        'и НЕ голосует; с confirm:true и confirm_token голосует. Голос необратим (механики снятия/смены не найдено), ' +
+        'поэтому choices на шаге confirm сверяются с подтверждёнными. После голоса проверяйте myChoices через get_poll.',
+      inputSchema: {
+        chat: z.string().min(1).describe('ChatId либо поисковый запрос для резолва чата'),
+        message_id: z
+          .string()
+          .regex(/^\d+$/)
+          .describe('Timestamp сообщения-опроса в микросекундах (строка)'),
+        choices: z
+          .array(z.int())
+          .nonempty()
+          .describe('Выбранные варианты (индексы/id). Единица доко-выведена (§11.4)'),
+        confirm: z
+          .boolean()
+          .optional()
+          .describe('false/отсутствует - вернуть draft; true - проголосовать (необратимо)'),
+        confirm_token: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Токен из draft. Обязателен при confirm:true'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    },
+    async (args) => {
+      try {
+        return jsonResult(await voteInPoll(deps, args));
+      } catch (error) {
+        return errorResult('vote_in_poll', error, logger);
       }
     },
   );
