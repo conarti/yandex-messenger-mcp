@@ -15,7 +15,7 @@
 import { resolveChat, type ChatCandidate } from '../../chat/resolveChat.js';
 import { enrichMessages, type EnrichedMessage } from '../../protocol/enrichMessage.js';
 import { buildHistoryParams, findChatEntry, type HistoryResponse } from '../../protocol/history.js';
-import { parseMicros } from '../../util/timestamps.js';
+import { includeDownTo, isoToMicros, parseMicros } from '../../util/timestamps.js';
 import type { ToolDeps } from './deps.js';
 
 /** `| undefined` в полях - осознанно: под exactOptionalPropertyTypes zod отдаёт именно такой тип */
@@ -24,6 +24,15 @@ export interface GetHistoryInput {
   limit?: number | undefined;
   /** Метка в мкс строкой: вернуть сообщения строго старше неё */
   before?: string | undefined;
+  /**
+   * Фильтр по времени (ISO). `from_date` - нижняя граница ВКЛЮЧАЮЩАЯ (сообщения от этой даты и позже),
+   * `to_date` - верхняя граница ИСКЛЮЧАЮЩАЯ (сообщение ровно на to_date НЕ попадает: `MaxTimestamp`
+   * исключающая, §14.2). Так «сообщения за сегодня» берутся одним вызовом (from=начало дня,
+   * to=начало следующего). `after` - строго ПОСЛЕ метки (исключающая нижняя), альтернатива from_date.
+   */
+  from_date?: string | undefined;
+  to_date?: string | undefined;
+  after?: string | undefined;
 }
 
 export type GetHistoryResult =
@@ -62,12 +71,36 @@ export async function getHistory(deps: ToolDeps, input: GetHistoryInput): Promis
     return { status: 'chat_not_found', query: input.chat };
   }
 
+  /*
+   * Верхняя граница: курсор пагинации `before` (мкс) приоритетнее `to_date` (ISO) - он ведёт
+   * постраничный обход. Обе кладутся в `MaxTimestamp` КАК ЕСТЬ (исключающая граница, §14.2):
+   * сообщение ровно на to_date не попадает.
+   */
+  const maxTimestamp =
+    input.before !== undefined
+      ? parseMicros(input.before)
+      : input.to_date !== undefined
+        ? isoToMicros(input.to_date)
+        : undefined;
+  /*
+   * Нижняя граница: `after` (строго после метки) приоритетнее `from_date` (включающая). `MinTimestamp`
+   * сама исключающая (§14.2), поэтому от `from_date` берётся `-1` (includeDownTo), чтобы захватить
+   * саму дату; для `after` семантика «строго после» - метка уходит как есть.
+   */
+  const minTimestamp =
+    input.after !== undefined
+      ? isoToMicros(input.after)
+      : input.from_date !== undefined
+        ? includeDownTo(isoToMicros(input.from_date))
+        : undefined;
+
   const response = await deps.ws.request<HistoryResponse>(
     'history',
     buildHistoryParams({
       chatId: resolved.chat_id,
       limit,
-      ...(input.before !== undefined ? { maxTimestamp: parseMicros(input.before) } : {}),
+      ...(maxTimestamp !== undefined ? { maxTimestamp } : {}),
+      ...(minTimestamp !== undefined ? { minTimestamp } : {}),
     }),
   );
 

@@ -7,6 +7,8 @@ import type { Config } from './config/types.js';
 import type { ToolDeps } from './mcp/tools/deps.js';
 import { downloadAttachment } from './mcp/tools/downloadAttachment.js';
 import { getHistory, DEFAULT_HISTORY_LIMIT } from './mcp/tools/getHistory.js';
+import { getMessage } from './mcp/tools/getMessage.js';
+import { getMessageContext, DEFAULT_CONTEXT_WINDOW } from './mcp/tools/getMessageContext.js';
 import { listChats } from './mcp/tools/listChats.js';
 import { search } from './mcp/tools/search.js';
 import { sendMessage } from './mcp/tools/sendMessage.js';
@@ -19,6 +21,8 @@ export const SERVER_VERSION = '0.1.0';
 export const TOOL_NAMES = [
   'list_chats',
   'get_history',
+  'get_message',
+  'get_message_context',
   'search',
   'send_message',
   'download_attachment',
@@ -106,6 +110,23 @@ export function createServer(options: CreateServerOptions): McpServer {
             'Курсор: timestamp в микросекундах (строка, точность BigInt). Вернуть сообщения строго старше него; ' +
               'значение для следующей страницы - next_before из предыдущей выдачи',
           ),
+        from_date: z
+          .string()
+          .optional()
+          .describe(
+            'ISO-дата/время нижней границы (включающая): сообщения от этой даты и позже. Пример: 2026-07-17',
+          ),
+        to_date: z
+          .string()
+          .optional()
+          .describe(
+            'ISO-дата/время верхней границы (ИСКЛЮЧАЮЩАЯ): сообщение ровно на to_date не попадает. ' +
+              'Для «сообщений за сегодня» передайте from_date=сегодня, to_date=завтра',
+          ),
+        after: z
+          .string()
+          .optional()
+          .describe('ISO-дата/время: сообщения строго ПОСЛЕ этого момента (альтернатива from_date)'),
       },
       annotations: { readOnlyHint: true },
     },
@@ -114,6 +135,81 @@ export function createServer(options: CreateServerOptions): McpServer {
         return jsonResult(await getHistory(deps, args));
       } catch (error) {
         return errorResult('get_history', error, logger);
+      }
+    },
+  );
+
+  server.registerTool(
+    'get_message',
+    {
+      title: 'Get single message',
+      description:
+        'Одно сообщение по chat_id + message_id (message_id = timestamp в микросекундах) ЛИБО по join-ссылке. ' +
+        'Без загрузки истории. Возвращает обогащённое сообщение и детальные реакции/прочтения.',
+      inputSchema: {
+        chat: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('ChatId либо поисковый запрос; нужен вместе с message_id'),
+        message_id: z
+          .string()
+          .regex(/^\d+$/)
+          .optional()
+          .describe('Timestamp сообщения в микросекундах (строка); нужен вместе с chat'),
+        url: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('join-ссылка Мессенджера (альтернатива паре chat + message_id)'),
+        with_reactions: z
+          .boolean()
+          .optional()
+          .describe('Тянуть детальные реакции/прочтения (2 доп. вызова). По умолчанию true'),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      try {
+        return jsonResult(await getMessage(deps, args));
+      } catch (error) {
+        return errorResult('get_message', error, logger);
+      }
+    },
+  );
+
+  server.registerTool(
+    'get_message_context',
+    {
+      title: 'Get message context',
+      description:
+        'Окно сообщений вокруг метки: N сообщений до и N после указанного message_id (timestamp в микросекундах).',
+      inputSchema: {
+        chat: z.string().min(1).describe('ChatId либо поисковый запрос для резолва чата'),
+        message_id: z
+          .string()
+          .regex(/^\d+$/)
+          .describe('Timestamp целевого сообщения в микросекундах (строка)'),
+        before: z
+          .int()
+          .min(0)
+          .max(200)
+          .optional()
+          .describe(`Сколько сообщений ДО метки (по умолчанию ${DEFAULT_CONTEXT_WINDOW})`),
+        after: z
+          .int()
+          .min(0)
+          .max(200)
+          .optional()
+          .describe(`Сколько сообщений ПОСЛЕ метки (по умолчанию ${DEFAULT_CONTEXT_WINDOW})`),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      try {
+        return jsonResult(await getMessageContext(deps, args));
+      } catch (error) {
+        return errorResult('get_message_context', error, logger);
       }
     },
   );
