@@ -72,6 +72,39 @@ function toChatCandidate(item: unknown): ChatCandidate | undefined {
   };
 }
 
+/**
+ * Self-чат («Избранное») в бакете `chats` (GAP, гейт спайка 5).
+ *
+ * Признак self-чата: пара одинаковых guid = мои (`ChatId === <myGuid>_<myGuid>`), либо
+ * `PrivateChatInfo` + `PartnerInfo.Guid === myGuid`. Тогда наружу уходит канонический
+ * ChatId `<myGuid>_<myGuid>` - даже если `data.chat_id` в выдаче поиска отсутствует.
+ *
+ * Не-self элемент -> `undefined`: у обычного приватного чата `PartnerInfo.Guid` = собеседник
+ * (не я), а `chat_id` = `<собеседник>_<я>` (не `<я>_<я>`). Поэтому резолв не-self чатов эта
+ * ветка не меняет - на них она просто не срабатывает и управление уходит в `toChatCandidate`.
+ */
+function toSelfChatCandidate(item: unknown, myGuid: string): ChatCandidate | undefined {
+  const data = asObject(asObject(item)?.['data']);
+  if (data === undefined) {
+    return undefined;
+  }
+  const selfChatId = buildPrivateChatId(myGuid, myGuid);
+  const chatId = stringOr(data['chat_id']);
+  const partnerGuid = stringOr(asObject(data['PartnerInfo'])?.['Guid']);
+  const bySelfId = chatId === selfChatId;
+  const byGate = data['PrivateChatInfo'] !== undefined && partnerGuid === myGuid;
+  if (!bySelfId && !byGate) {
+    return undefined;
+  }
+  const name = stringOr(data['name']);
+  return {
+    chat_id: selfChatId,
+    ...(name !== undefined ? { name } : {}),
+    kind: 'private',
+    via: 'chat_search',
+  };
+}
+
 /** Элемент бакета `users`: `{data:{guid, display_name, ...}, ...}` (живой захват 2026-07-17) */
 function toUserCandidate(item: unknown, myGuid: string): ChatCandidate | undefined {
   const data = asObject(asObject(item)?.['data']);
@@ -117,7 +150,14 @@ export async function resolveChat(input: string, deps: ResolveChatDeps): Promise
   }
 
   const chatItems = await searchOne(deps, query, 'chats');
-  const chatCandidates = chatItems.map(toChatCandidate).filter((c): c is ChatCandidate => c !== undefined);
+  /*
+   * Self-чат («Избранное») по имени (GAP): self-элемент даёт канонический `<myGuid>_<myGuid>`,
+   * прочие - обычного кандидата. Резолв не-self чатов не меняется: на них toSelfChatCandidate
+   * возвращает undefined, и работает прежний toChatCandidate.
+   */
+  const chatCandidates = chatItems
+    .map((item) => toSelfChatCandidate(item, deps.myGuid) ?? toChatCandidate(item))
+    .filter((c): c is ChatCandidate => c !== undefined);
 
   if (chatCandidates.length === 1) {
     const only = chatCandidates[0]!;
