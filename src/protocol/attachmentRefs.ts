@@ -9,6 +9,7 @@
  * ЖИВАЯ ПРОВЕРКА (2026-07-17): по 372 сообщениям реального профиля набор ключей FileInfo
  * ровно {Id2, Name, Size, Source} - лишних полей нет.
  */
+import { asObject, numberOr } from '../util/json.js';
 
 /** `Source` enum FileInfo (§11.1) */
 const SOURCE_NAMES: Record<number, AttachmentSource> = { 0: 'mds', 1: 'disk' };
@@ -60,10 +61,6 @@ function toRef(kind: AttachmentKind, fileInfo: unknown, extra: Partial<Attachmen
   };
 }
 
-function numberOr(value: unknown): number | undefined {
-  return typeof value === 'number' ? value : undefined;
-}
-
 function imageExtras(image: Record<string, unknown>): Partial<AttachmentRef> {
   const width = numberOr(image['Width']);
   const height = numberOr(image['Height']);
@@ -72,10 +69,6 @@ function imageExtras(image: Record<string, unknown>): Partial<AttachmentRef> {
     ...(height !== undefined ? { height } : {}),
     ...(typeof image['Animated'] === 'boolean' ? { animated: image['Animated'] } : {}),
   };
-}
-
-function asObject(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : undefined;
 }
 
 /**

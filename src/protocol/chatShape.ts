@@ -17,6 +17,7 @@
  *    сообщения даёт `Limit:1`: тогда каждый чат несёт `Messages[1]`, и его метка совпала
  *    с `LastTsMcs` у 13/13 чатов - то есть это ровно последнее сообщение, одним вызовом.
  */
+import { asObject, numberOr, stringOr } from '../util/json.js';
 import { microsToIso, parseMicros } from '../util/timestamps.js';
 import { normalizeMessages, type Message } from './messageShape.js';
 
@@ -38,28 +39,14 @@ export interface Chat {
   last_message?: Message;
 }
 
-function asObject(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function stringOr(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
-function numberOr(value: unknown, fallback: number): number {
-  return typeof value === 'number' ? value : fallback;
-}
-
 /**
  * Непрочитанное = сколько последовательностей чата я не досмотрел.
  * Клампим снизу: на своих же исходящих `LastSeenByMeSeqNo` может обогнать `LastSeqNo`,
  * и отрицательное «непрочитанное» было бы бессмыслицей.
  */
 export function countUnread(raw: Record<string, unknown>): number {
-  const last = numberOr(raw['LastSeqNo'], 0);
-  const seen = numberOr(raw['LastSeenByMeSeqNo'], 0);
+  const last = numberOr(raw['LastSeqNo']) ?? 0;
+  const seen = numberOr(raw['LastSeenByMeSeqNo']) ?? 0;
   return Math.max(0, last - seen);
 }
 
@@ -124,7 +111,7 @@ export function normalizeChats(rawChats: unknown): Chat[] {
 }
 
 /** Свежие первыми. Сравнение на BigInt: метки 16-значные, float тут не имеет права участвовать */
-export function sortByRecency(chats: Chat[]): Chat[] {
+function sortByRecency(chats: Chat[]): Chat[] {
   return [...chats].sort((a, b) => {
     const left = a.last_activity_mcs === undefined ? 0n : BigInt(a.last_activity_mcs);
     const right = b.last_activity_mcs === undefined ? 0n : BigInt(b.last_activity_mcs);

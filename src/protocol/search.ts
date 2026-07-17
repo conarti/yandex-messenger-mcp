@@ -64,7 +64,7 @@ export class SearchEntityError extends Error {
  * Отвергает невалидные entities НА ВХОДЕ (§17.6), не доводя до сервера:
  * его ошибка (`bad_request: entities are required`) о настоящей причине не говорит.
  */
-export function assertValidEntities(entities: readonly string[]): asserts entities is SearchEntity[] {
+function assertValidEntities(entities: readonly string[]): asserts entities is SearchEntity[] {
   if (entities.length === 0) {
     throw new SearchEntityError('<пусто>');
   }

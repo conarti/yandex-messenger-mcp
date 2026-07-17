@@ -19,6 +19,7 @@
  * говорит, что кода нет в справочнике §14.6 - сырое число доходит до пользователя.
  */
 import { codeName, PushCommitStatus, ResponseStatus, TransportErrorCode } from '../transport/ws/frameTypes.js';
+import { asObject, stringOr } from '../util/json.js';
 
 export type ErrorLayer = 'transport' | 'application' | 'push';
 
@@ -185,14 +186,6 @@ export function mapTransportError(method: string, errorCode: number): MessengerE
     retriable: RETRIABLE_TRANSPORT_CODES.has(errorCode),
     ...(TRANSPORT_HINTS[errorCode] !== undefined ? { details: TRANSPORT_HINTS[errorCode] } : {}),
   });
-}
-
-function asObject(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : undefined;
-}
-
-function stringOr(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
 /**

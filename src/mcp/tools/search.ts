@@ -11,6 +11,7 @@
 import type { SearchEntity } from '../../config/defaults.js';
 import { searchWithEscalation } from '../../protocol/search.js';
 import { normalizeMessage, type Message } from '../../protocol/messageShape.js';
+import { asObject, stringOr } from '../../util/json.js';
 import type { ToolDeps } from './deps.js';
 
 /** `| undefined` в полях - осознанно: под exactOptionalPropertyTypes zod отдаёт именно такой тип */
@@ -40,14 +41,6 @@ export interface SearchResult {
   /** true => набор может быть неполон; причина - в truncation_reason */
   truncated: boolean;
   truncation_reason?: string;
-}
-
-function asObject(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : undefined;
-}
-
-function stringOr(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
 function toUserHit(item: unknown): UserHit | undefined {

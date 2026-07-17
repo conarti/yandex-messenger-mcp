@@ -11,6 +11,7 @@
  * Ответы (reply) отдельного kind тоже не имеют - они моделируются форвардом с цитатой:
  * `ForwardedMessageRefs` + `ForwardedMessageStyles.Quote` (§11.1).
  */
+import { asObject, stringOr } from '../util/json.js';
 import { microsToIso, parseMicros } from '../util/timestamps.js';
 import { extractAttachmentRefs, type AttachmentRef } from './attachmentRefs.js';
 
@@ -71,16 +72,6 @@ export interface Message {
   edited: boolean;
   edited_at?: string;
   deleted: boolean;
-}
-
-function asObject(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function stringOr(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
 function buildContext(body: Record<string, unknown>): MessageContext | undefined {

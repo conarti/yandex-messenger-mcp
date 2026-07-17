@@ -21,6 +21,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { codeName, PushCommitStatus } from '../transport/ws/frameTypes.js';
+import { asObject, numberOr } from '../util/json.js';
 import { parseMicros } from '../util/timestamps.js';
 import { mapPushCommitStatus, MessengerError } from './errors.js';
 
@@ -137,10 +138,6 @@ export class PushNotCommittedError extends MessengerError {
   }
 }
 
-function asObject(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : undefined;
-}
-
 /** Читает первое присутствующее написание ключа: wire-имена восстановлены по маппингу, не наблюдались */
 function pick(source: Record<string, unknown> | undefined, ...keys: string[]): unknown {
   for (const key of keys) {
@@ -150,10 +147,6 @@ function pick(source: Record<string, unknown> | undefined, ...keys: string[]): u
     }
   }
   return undefined;
-}
-
-function numberOr(value: unknown): number | undefined {
-  return typeof value === 'number' ? value : undefined;
 }
 
 function microsOr(value: unknown): string | undefined {

@@ -12,6 +12,7 @@
  */
 import type { SearchEntity } from '../config/defaults.js';
 import { searchWithEscalation, type SearchDeps } from '../protocol/search.js';
+import { asObject, stringOr } from '../util/json.js';
 
 /** Приватный чат: `<guidA>_<guidB>` (§5) */
 const PRIVATE_CHAT_ID = /^[0-9a-f-]{36}_[0-9a-f-]{36}$/i;
@@ -51,14 +52,6 @@ export function isChatId(value: string): boolean {
  */
 export function buildPrivateChatId(partnerGuid: string, myGuid: string): string {
   return `${partnerGuid}_${myGuid}`;
-}
-
-function asObject(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : undefined;
-}
-
-function stringOr(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
 /** Элемент бакета `chats`: `{data:{chat_id, name, ...}, ...}` (живой захват 2026-07-17) */

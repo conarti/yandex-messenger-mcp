@@ -34,7 +34,7 @@ function isYandexRuCookie(cookie: Cookie): boolean {
   return cookie.domain === '.yandex.ru' || cookie.domain === 'yandex.ru';
 }
 
-export function buildCookieHeader(cookies: Cookie[]): string {
+function buildCookieHeader(cookies: Cookie[]): string {
   return cookies
     .filter(isYandexRuCookie)
     .map((cookie) => `${cookie.name}=${cookie.value}`)
@@ -45,7 +45,7 @@ function findCookie(cookies: Cookie[], name: string): Cookie | undefined {
   return cookies.filter(isYandexRuCookie).find((cookie) => cookie.name === name);
 }
 
-export function hasLiveSession(cookies: Cookie[]): boolean {
+function hasLiveSession(cookies: Cookie[]): boolean {
   const session = findCookie(cookies, SESSION_COOKIE);
   return session !== undefined && session.value.length > 0;
 }
