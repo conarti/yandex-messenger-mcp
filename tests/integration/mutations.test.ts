@@ -160,7 +160,7 @@ describe('set_reaction: известный тип уходит одним выз
   });
 });
 
-describe('mark_read: одним вызовом, форма доко-выведена', () => {
+describe('mark_read: одним вызовом, форма принята живьём (US-009)', () => {
   it('с message_id: SeenMarker внутри полного конверта, form_status помечен', async () => {
     const result = await markRead(deps, { chat: CHAT_ID, message_id: MESSAGE_ID });
 
@@ -169,7 +169,7 @@ describe('mark_read: одним вызовом, форма доко-выведе
       chat_id: CHAT_ID,
       up_to_message_id: MESSAGE_ID,
       marker: 'SeenMarker',
-      form_status: 'doc_derived_unverified',
+      form_status: 'live_accepted_effect_unverified',
     });
     expect(mock.requestsOf('push')[0]?.payload).not.toHaveProperty('SeenMarker');
     const seenMarker = pushClientMessage()['SeenMarker'] as Record<string, unknown>;
@@ -202,7 +202,7 @@ describe('mark_read: одним вызовом, форма доко-выведе
   });
 });
 
-describe('pin_message: одним вызовом, семантика доко-выведена', () => {
+describe('pin_message: одним вызовом, семантика подтверждена живьём (US-009)', () => {
   it('закреп: Pin с Timestamp внутри полного конверта, form_status помечен', async () => {
     const result = await pinMessage(deps, { chat: CHAT_ID, message_id: MESSAGE_ID });
 
@@ -210,7 +210,7 @@ describe('pin_message: одним вызовом, семантика доко-в
       status: 'ok',
       action: 'pin',
       message_id: MESSAGE_ID,
-      form_status: 'doc_derived_unverified',
+      form_status: 'verified',
     });
     expect(mock.requestsOf('push')[0]?.payload).not.toHaveProperty('Pin');
     const pin = pushClientMessage()['Pin'] as Record<string, unknown>;

@@ -422,7 +422,8 @@ export function createServer(options: CreateServerOptions): McpServer {
       description:
         'Отмечает чат прочитанным ОДНИМ вызовом, без confirm (безобидно). Без message_id отмечает ' +
         'прочитанным до самого свежего сообщения (тянет последнюю страницу истории). ' +
-        'ВНИМАНИЕ: форма маркера (SeenMarker) доко-выведена и живьём ещё не подтверждена - см. form_status в выдаче.',
+        'ПРИМЕЧАНИЕ: форма маркера (SeenMarker) принята бэкендом живьём и подтверждена как маркер ' +
+        'seen-позиции; обнуление ненулевого непрочитанного в self-чате не наблюдаемо - см. form_status в выдаче.',
       inputSchema: {
         chat: z.string().min(1).describe('ChatId либо поисковый запрос для резолва чата'),
         message_id: z
@@ -455,7 +456,7 @@ export function createServer(options: CreateServerOptions): McpServer {
       description:
         'Закрепляет или открепляет сообщение ОДНИМ вызовом, без confirm (легко откатить). ' +
         'С message_id закрепляет это сообщение; без message_id открепляет. ' +
-        'ВНИМАНИЕ: семантика Pin.Timestamp доко-выведена и живьём ещё не подтверждена - см. form_status в выдаче.',
+        'Семантика Pin.Timestamp подтверждена живьём (form_status: verified).',
       inputSchema: {
         chat: z.string().min(1).describe('ChatId либо поисковый запрос для резолва чата'),
         message_id: z
@@ -639,7 +640,8 @@ export function createServer(options: CreateServerOptions): McpServer {
           .enum(ATTACHMENT_SIZES)
           .optional()
           .describe(
-            'Размер превью для КАРТИНОК. Без него скачивается оригинал файла; для не-картинок бессмыслен',
+            'Размер превью для КАРТИНОК. ВНИМАНИЕ: живьём этот параметр сервером ИГНОРИРУЕТСЯ - ' +
+              'download-путь отдаёт оригинал независимо от size (проверено на картинке 4080px). Оставлен для совместимости.',
           ),
       },
       /*

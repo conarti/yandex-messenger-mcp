@@ -2,9 +2,16 @@
  * `mark_read` - отметить чат прочитанным ОДНИМ вызовом, без confirm: безобидно, сообщает
  * факт, который и так наступил (спека Round 7).
  *
- * ⚠️ ФОРМА ДОКО-ВЫВЕДЕНА (US-009/Phase 0), живьём НЕ подтверждена. Выбран маркер
- * `SeenMarker` (обоснование - в protocol/mutations.buildReadMarkerMutation). До живого
- * подтверждения помечено в README; в выдаче инструмента виден `form_status`.
+ * ФОРМА ПРИНЯТА ЖИВЬЁМ (US-009, self-чат 2026-07-17), выбран маркер `SeenMarker`. Перебор
+ * трёх форм §9.3 на проводе: `SeenMarker`/`ReadMarker`/`UnseenMarker` - ВСЕ принимаются
+ * бэкендом (никакого `BACKEND_CALL_ERROR(2)`), но ведут себя по-разному. В уже полностью
+ * прочитанном self-чате `SeenMarker` отвечает `DUPLICATE(8)` (сервер сверил с текущей
+ * seen-позицией и не нашёл нового), а `ReadMarker`/`UnseenMarker` коммитят `FULLY_COMMITTED(1)`
+ * заново - то есть seen-позицию (от которой считается непрочитанное) двигает именно
+ * `SeenMarker`. Обнуление НЕНУЛЕВОГО непрочитанного в самом self-чате структурно не наблюдаемо
+ * (свои же исходящие сразу «увидены мной»), поэтому эффект на счётчик остаётся долгом:
+ * `form_status: live_accepted_effect_unverified`. Обоснование выбора - в
+ * protocol/mutations.buildReadMarkerMutation.
  *
  * ГРАНИЦА «ДО КУДА ПРОЧИТАНО». Непрочитанное в §17.9 - это `LastSeqNo - LastSeenByMeSeqNo`.
  * Обнулить его = отметить увиденным вплоть до самого свежего сообщения. Дал вызывающий
@@ -34,10 +41,13 @@ export type MarkReadResult =
       up_to_message_id: string;
       commit_status: number;
       commit_status_name: string;
-      /** Выбранный маркер: доко-выведен, живьём не подтверждён (US-009) */
+      /** Выбранный маркер: форма принята живьём, seen-позиция двигается им (US-009) */
       marker: 'SeenMarker';
-      /** Форма доко-выведена: предупреждение видно в выдаче, не только в README */
-      form_status: 'doc_derived_unverified';
+      /**
+       * Форма принята бэкендом живьём (коммитит, не `BACKEND_CALL_ERROR`), маркер seen-позиции
+       * подтверждён перебором; обнуление ненулевого непрочитанного в self-чате не наблюдаемо.
+       */
+      form_status: 'live_accepted_effect_unverified';
     }
   | { status: 'empty_chat'; chat_id: string }
   | { status: 'ambiguous_chat'; candidates: ChatCandidate[] }
@@ -96,6 +106,6 @@ export async function markRead(deps: ToolDeps, input: MarkReadInput): Promise<Ma
     commit_status: outcome.status,
     commit_status_name: outcome.status_name,
     marker: 'SeenMarker',
-    form_status: 'doc_derived_unverified',
+    form_status: 'live_accepted_effect_unverified',
   };
 }

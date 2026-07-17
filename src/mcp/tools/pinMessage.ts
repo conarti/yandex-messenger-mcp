@@ -2,11 +2,12 @@
  * `pin_message` - закрепить/открепить ОДНИМ вызовом, без confirm: легко снять, ничего не
  * разрушает (спека Round 7).
  *
- * ⚠️ СЕМАНТИКА ДОКО-ВЫВЕДЕНА (US-009/Phase 0), живьём НЕ подтверждена. По §9.3
- * `push({ Pin:{ChatId,Timestamp?} })`: метка присутствует = закрепить это сообщение,
- * отсутствует = открепить. «Пустой `Pin.Timestamp` = открепить» - предположение, до
- * живого подтверждения помечено в README; в выдаче виден `form_status`. Форму держит
- * protocol/mutations.buildPinMutation - заменяется одной правкой.
+ * СЕМАНТИКА ПОДТВЕРЖДЕНА ЖИВЬЁМ (US-009, self-чат 2026-07-17). `push({ Pin:{ChatId,Timestamp} })`
+ * с меткой -> `Status:1 FULLY_COMMITTED`, и в `ChatData` появляется `PinnedMessageInfo`,
+ * ссылающийся ровно на эту метку. `push({ Pin:{ChatId} })` без метки -> `Status:1`, и
+ * `PinnedMessageInfo` перестаёт ссылаться на цель (поле схлопывается) = открепление. То есть
+ * «метка присутствует = закрепить, отсутствует = открепить» проверено на проводе, а не выведено
+ * из доки. Форму держит protocol/mutations.buildPinMutation. В выдаче `form_status: verified`.
  */
 import { resolveChat, type ChatCandidate } from '../../chat/resolveChat.js';
 import { buildPinMutation, pushMutation } from '../../protocol/mutations.js';
@@ -27,8 +28,8 @@ export type PinMessageResult =
       message_id?: string;
       commit_status: number;
       commit_status_name: string;
-      /** Семантика Pin.Timestamp доко-выведена (US-009): предупреждение видно в выдаче */
-      form_status: 'doc_derived_unverified';
+      /** Семантика Pin.Timestamp подтверждена живьём (US-009): закреп/открепление видны в ChatData */
+      form_status: 'verified';
     }
   | { status: 'ambiguous_chat'; candidates: ChatCandidate[] }
   | { status: 'chat_not_found'; query: string };
@@ -65,6 +66,6 @@ export async function pinMessage(deps: ToolDeps, input: PinMessageInput): Promis
     ...(input.message_id !== undefined ? { message_id: input.message_id } : {}),
     commit_status: outcome.status,
     commit_status_name: outcome.status_name,
-    form_status: 'doc_derived_unverified',
+    form_status: 'verified',
   };
 }

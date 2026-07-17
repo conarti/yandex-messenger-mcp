@@ -43,7 +43,12 @@ function asMutation(message: Record<string, unknown>): MutationClientMessage {
   return message as unknown as MutationClientMessage;
 }
 
-/** `Reaction.Action` (§9.3). ADD - серверный дефолт (поле не шлём); документированы REMOVE/REPLACE */
+/**
+ * `Reaction.Action` (§9.3). ADD - серверный дефолт (поле не шлём); документированы REMOVE/REPLACE.
+ * ADD (без `Action`) и REMOVE (`Action:1`) ПОДТВЕРЖДЕНЫ ЖИВЬЁМ (US-009, self-чат 2026-07-17):
+ * постановка -> реакция видна через `list_reactions`, снятие тем же билдером с `Action:1` ->
+ * реакция исчезает; `Status:1` в обоих случаях. `REPLACE(2)` живьём не гонялся.
+ */
 export const REACTION_ACTION_REMOVE = 1;
 export const REACTION_ACTION_REPLACE = 2;
 
@@ -72,9 +77,9 @@ export function buildReactionMutation(input: ReactionMutationInput): MutationCli
 export interface PinMutationInput {
   chatId: string;
   /**
-   * Метка закрепляемого сообщения (мкс). ⚠️ ДОКО-ВЫВЕДЕНО (US-009/Phase 0): семантика
-   * `Pin.Timestamp?` живьём не проверена. Принято по §9.3: метка присутствует = закрепить
-   * это сообщение, отсутствует = открепить. Заменяется одной правкой этого билдера.
+   * Метка закрепляемого сообщения (мкс). ПОДТВЕРЖДЕНО ЖИВЬЁМ (US-009, self-чат 2026-07-17):
+   * метка присутствует = закрепить это сообщение (в `ChatData` появляется `PinnedMessageInfo`
+   * на эту метку), отсутствует = открепить (ссылка на цель уходит). `Status:1` в обоих случаях.
    */
   timestamp?: string;
 }
@@ -98,14 +103,18 @@ export interface ReadMarkerInput {
 }
 
 /**
- * Маркер прочтения. ⚠️ ДОКО-ВЫВЕДЕНО (US-009/Phase 0), живьём НЕ подтверждено.
+ * Маркер прочтения. ФОРМА ПРИНЯТА ЖИВЬЁМ (US-009, self-чат 2026-07-17), маркер `SeenMarker`.
  *
  * Из трёх маркеров §9.3 (`SeenMarker`/`UnseenMarker`/`ReadMarker`) выбран `SeenMarker`:
  * непрочитанное в §17.9 считается как `LastSeqNo - LastSeenByMeSeqNo`, и обнулить его =
- * подвинуть «последнее увиденное МНОЙ» (`LastSeenByMe*`) вперёд - ровно семантика
- * `SeenMarker` (seen by me). `ReadMarker` целится в перечень `Timestamps[]`,
- * `UnseenMarker` помечает НЕпрочитанным (обратное действие). US-009 подтверждает или
- * заменяет маркер ОДНОЙ правкой этого билдера - структура инструмента не меняется.
+ * подвинуть «последнее увиденное МНОЙ» (`LastSeenByMe*`) вперёд - ровно семантика `SeenMarker`.
+ * Перебор на проводе это подтвердил: все три формы бэкенд ПРИНИМАЕТ (нет `BACKEND_CALL_ERROR`),
+ * но в уже прочитанном self-чате `SeenMarker` отвечает `DUPLICATE(8)` (сверка с текущей
+ * seen-позицией дала «нового нет»), а `ReadMarker`/`UnseenMarker` коммитят `FULLY_COMMITTED(1)`
+ * заново - то есть именно `SeenMarker` пишет seen-позицию, от которой считается непрочитанное.
+ * Обнуление НЕНУЛЕВОГО непрочитанного в self-чате структурно не наблюдаемо (свои же исходящие
+ * сразу «увидены мной») - это остаётся долгом (см. README), но выбор маркера подтверждён.
+ * Заменяется одной правкой этого билдера, структура инструмента не меняется.
  *
  * `push({ SeenMarker:{ChatId,Timestamp,SeqNo?} })` внутри полного конверта.
  */
@@ -127,9 +136,12 @@ export interface DeleteMutationInput {
 
 /**
  * Удаление своего сообщения (§9.3): пустой `Plain{ChatId, Timestamp}` без content-поля.
- * Именно отсутствие content при наличии `Timestamp` целевого сообщения = «удалить это»
- * (детект при чтении - `ServerMessageInfo.Deleted=true`, §9.1). Серверный `DUPLICATE(8)`
- * на повторе НЕ обещается (target-путь, см. шапку confirm.ts).
+ * Именно отсутствие content при наличии `Timestamp` целевого сообщения = «удалить это».
+ * ПОДТВЕРЖДЕНО ЖИВЬЁМ (US-009, self-чат 2026-07-17): `Status:1 FULLY_COMMITTED`, повторное
+ * чтение даёт `Deleted=true` и пустой текст (§9.1). Серверный `DUPLICATE(8)` на повторе НЕ
+ * приходит: сырой replay того же удаления дважды на уже удалённом сообщении вернул снова
+ * `FULLY_COMMITTED(1)` (сервер переприменяет, не дедуплицирует) - от повтора защищает локальная
+ * память confirm-слоя, не сервер (target-путь, см. шапку confirm.ts).
  *
  * `push({ Plain:{ChatId, Timestamp} })` внутри полного конверта.
  */
@@ -153,8 +165,9 @@ export interface EditMutationInput {
 /**
  * Правка своего сообщения (§9.3): `convertMessageToPlain` + `Timestamp` целевого сообщения.
  * Тот же `Plain` с новым `Text`, но с проставленным `Timestamp` = «переписать это сообщение»,
- * а не отправить новое (детект при чтении - непустой `LastEditTimestamp`, §9.1). Серверный
- * `DUPLICATE(8)` на повторе НЕ обещается (target-путь).
+ * а не отправить новое. ПОДТВЕРЖДЕНО ЖИВЬЁМ (US-009, self-чат 2026-07-17): `Status:1`, повторное
+ * чтение даёт новый текст, `edited=true` и непустой `edited_at` (`LastEditTimestamp`, §9.1).
+ * Серверный `DUPLICATE(8)` на повторе НЕ обещается (target-путь, как у удаления).
  *
  * `push({ Plain:{ChatId, Timestamp, Text:{MessageText}} })` внутри полного конверта.
  */
