@@ -86,6 +86,24 @@ function pollInfoResponds(payload: Record<string, unknown>): void {
   mock.responders.set('poll_info', (request, connection) => mock.reply(connection, request, payload));
 }
 
+/** message_info-ответ с телом-опросом (§17.15): вопрос/варианты/лимит выбора живут в Plain.Poll */
+function pollMessageInfoResponds(poll: Record<string, unknown>): void {
+  mock.responders.set('message_info', (request, connection) =>
+    mock.reply(connection, request, {
+      Message: {
+        ClientMessage: { Plain: { ChatId: CHAT_ID, Poll: poll } },
+        ServerMessageInfo: {
+          Timestamp: Number(MESSAGE_ID),
+          SeqNo: 7,
+          LastEditTimestamp: 0,
+          Deleted: false,
+          From: { Guid: MY_GUID, DisplayName: 'Автор' },
+        },
+      },
+    }),
+  );
+}
+
 function pushRespondsWith(payload: Record<string, unknown>): void {
   mock.responders.set('push', (request, connection) => mock.reply(connection, request, payload));
 }
@@ -322,15 +340,9 @@ describe('vote_in_poll: draft->confirm, форма experimental (AC-29 усло�
 });
 
 describe('get_poll: чтение опроса без confirm (AC-28, безусловно)', () => {
-  it('варианты, мой выбор и результаты; признак is_poll; poll_info одним вызовом', async () => {
-    pollInfoResponds({
-      answerVotes: [
-        { Answer: 'Да', Votes: 5 },
-        { Answer: 'Нет', Votes: 2 },
-      ],
-      myChoices: [0],
-      results: { total: 7 },
-    });
+  it('вопрос/варианты/лимит выбора из тела (message_info), результаты из poll_info; по одному вызову каждого', async () => {
+    pollMessageInfoResponds({ Title: 'Обед?', Answers: ['Да', 'Нет'], MaxChoices: 1, Results: {} });
+    pollInfoResponds({ Results: { total: 7 } });
 
     const result = await getPoll(deps, { chat: CHAT_ID, message_id: MESSAGE_ID });
 
@@ -338,22 +350,25 @@ describe('get_poll: чтение опроса без confirm (AC-28, безус�
       throw new Error(`ожидался ok, получен ${result.status}`);
     }
     expect(result.is_poll).toBe(true);
+    expect(result.title).toBe('Обед?');
+    expect(result.max_choices).toBe(1);
     expect(result.answers).toEqual([
-      { index: 0, title: 'Да', votes: 5 },
-      { index: 1, title: 'Нет', votes: 2 },
+      { index: 0, title: 'Да' },
+      { index: 1, title: 'Нет' },
     ]);
-    expect(result.my_choices).toEqual([0]);
+    /* my_choices - не подтверждено живьём (§17.15): poll_info без myChoices/MyChoices даёт [] */
+    expect(result.my_choices).toEqual([]);
     expect(result.results).toEqual({ total: 7 });
+    expect(mock.requestsOf('message_info')).toHaveLength(1);
     expect(mock.requestsOf('poll_info')).toHaveLength(1);
     /* Чтение опроса - read-путь: ни одного push */
     expect(mock.requestsOf('push')).toHaveLength(0);
   });
 
-  it('не опрос -> статус not_a_poll, пустая структура за опрос не выдаётся', async () => {
-    pollInfoResponds({});
-
+  it('не опрос -> статус not_a_poll, poll_info НЕ вызывается', async () => {
     const result = await getPoll(deps, { chat: CHAT_ID, message_id: MESSAGE_ID });
 
     expect(result.status).toBe('not_a_poll');
+    expect(mock.requestsOf('poll_info')).toHaveLength(0);
   });
 });

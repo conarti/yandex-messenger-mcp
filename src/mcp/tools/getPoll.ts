@@ -1,13 +1,15 @@
 /**
- * `get_poll` - чтение опроса по chat + message_id через `poll_info` (§14.3), БЕЗ confirm: это
- * read-путь. Отдаёт варианты (`answerVotes`), мой выбор (`myChoices`) и результаты (`results`).
+ * `get_poll` - чтение опроса по chat + message_id, БЕЗ confirm: это read-путь. Вопрос/варианты/
+ * лимит выбора читаются из тела сообщения (`message_info`, живьём: §17.15), агрегированные
+ * результаты - из `poll_info`. Отдаёт `title`, `answers` (с `title`/`votes`), `max_choices`, мой
+ * выбор (`my_choices`) и результаты (`results`).
  *
  * ЧТЕНИЕ РАЗРЕШЕНО ВЕЗДЕ и проверяемо против ЛЮБОГО реального опроса в любом чате - в отличие от
  * голоса (`vote_in_poll`), недостижимого в self-чате. Признак «это опрос» виден и в обычной выдаче
  * сообщения (`kind:'poll'`, messageShape), и здесь полем `is_poll`.
  *
- * НЕ ОПРОС -> внятный статус. Если `poll_info` не вернул ни вариантов, ни результатов, сообщение
- * не опрос: возвращается `not_a_poll`, а пустая структура за опрос не выдаётся.
+ * НЕ ОПРОС -> внятный статус. Если тело сообщения не несёт `Plain.Poll`, сообщение не опрос:
+ * возвращается `not_a_poll`, а пустая структура за опрос не выдаётся.
  */
 import { resolveChat, type ChatCandidate } from '../../chat/resolveChat.js';
 import { NotAPollError, readPoll, type PollInfoResult } from '../../protocol/poll.js';

@@ -554,9 +554,10 @@ export function createServer(options: CreateServerOptions): McpServer {
     {
       title: 'Get poll',
       description:
-        'Читает опрос по chat + message_id (message_id = timestamp в микросекундах) через poll_info, без confirm. ' +
-        'Возвращает варианты (answer_votes), мой выбор (my_choices) и результаты (results). Признак «это опрос» ' +
-        'виден полем is_poll (в обычной выдаче сообщения - kind:poll). Если сообщение не опрос - статус not_a_poll.',
+        'Читает опрос по chat + message_id (message_id = timestamp в микросекундах), без confirm. ' +
+        'Возвращает вопрос (title), варианты (answers, с title/votes), лимит выбора (max_choices), ' +
+        'мой выбор (my_choices) и результаты (results). Признак «это опрос» виден полем is_poll ' +
+        '(в обычной выдаче сообщения - kind:poll). Если сообщение не опрос - статус not_a_poll.',
       inputSchema: {
         chat: z.string().min(1).describe('ChatId либо поисковый запрос для резолва чата'),
         message_id: z
