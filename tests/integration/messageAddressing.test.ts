@@ -167,23 +167,49 @@ describe('get_message по join-ссылке', () => {
     expect(httpCall).toHaveBeenCalledWith('get_chats_info', { invite_hash: 'hash-1' });
   });
 
-  it('3-сегментная (сообщение в треде) распознаётся, thread_id ждёт Phase 4', async () => {
+  it('3-сегментная (сообщение в треде) резолвится в thread_id и адресуется message_info', async () => {
+    /* Родитель приватный -> thread_id = `110/0/<parent>_<parent_ts>` (§17.10) */
+    const threadId = `110/0/${CHAT_ID}_${TS_STR}`;
+    const threadMsgTs = 1784288000000000;
     const { deps, wsRequest } = makeDeps({
+      ws: (method, params) => {
+        if (method === 'message_info') return { Message: infoMessage(threadMsgTs, 'в треде') };
+        if (method === 'list_reactions') {
+          return params['Mode'] === 1 ? { UserReads: [], ReadsCount: 0 } : { UserReactions: [] };
+        }
+        return {};
+      },
       httpCall: (method) => (method === 'get_chats_info' ? { chats: [{ chat_id: CHAT_ID }] } : {}),
+    });
+
+    const result = await getMessage(deps, {
+      url: `https://yandex.ru/chat#/join/hash-1/${TS_STR}/${threadMsgTs}`,
+    });
+
+    if (result.status !== 'ok') throw new Error(`ожидался ok, получен ${result.status}`);
+    /* Сообщение адресовано в тред (ChatId=thread_id, Timestamp=метка внутри треда) */
+    expect(result.chat_id).toBe(threadId);
+    expect(result.message.text).toBe('в треде');
+    const infoCall = wsRequest.mock.calls.find(([m]) => m === 'message_info');
+    expect(infoCall?.[1]).toMatchObject({ ChatId: threadId, Timestamp: threadMsgTs, InviteHash: 'hash-1' });
+  });
+
+  it('3-сегментная на бизнес-чат (префикс 2) -> thread_unsupported, message_info не дёргается', async () => {
+    const businessChat = '2/1234/11111111-1111-1111-1111-111111111111';
+    const { deps, wsRequest } = makeDeps({
+      httpCall: (method) => (method === 'get_chats_info' ? { chats: [{ chat_id: businessChat }] } : {}),
     });
 
     const result = await getMessage(deps, {
       url: `https://yandex.ru/chat#/join/hash-1/${TS_STR}/1784288000000000`,
     });
 
-    if (result.status !== 'thread_message_pending') {
-      throw new Error(`ожидался thread_message_pending, получен ${result.status}`);
+    if (result.status !== 'thread_unsupported') {
+      throw new Error(`ожидался thread_unsupported, получен ${result.status}`);
     }
-    expect(result.parent_chat_id).toBe(CHAT_ID);
-    expect(result.thread_root_timestamp).toBe(TS_STR);
+    expect(result.parent_chat_id).toBe(businessChat);
     expect(result.thread_message_timestamp).toBe('1784288000000000');
-    expect(result.note).toMatch(/Phase 4/);
-    /* Сообщение не адресуется: message_info не дёргается */
+    expect(result.reason).toMatch(/недоступен/);
     expect(wsRequest.mock.calls.some(([m]) => m === 'message_info')).toBe(false);
   });
 });

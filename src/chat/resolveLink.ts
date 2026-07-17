@@ -15,11 +15,13 @@
  * `RegistryHttpClient` - он и так не делает CSRF (тот живёт в слое auth только для `request_user`).
  *
  * ТРИ СЕГМЕНТА = СООБЩЕНИЕ В ТРЕДЕ. Второй сегмент задаёт родительский чат, из него и метки
- * деривируется `thread_id` (§17.10), третий - метка внутри треда. Сама деривация (`buildThreadId`)
- * приезжает в Phase 4: тут 3-сегментная ссылка ПОЛНОСТЬЮ распарсивается, родительский чат
- * резолвится, но адресация сообщения в треде помечается как ожидающая Phase 4 - без дублирующей
- * деривации `thread_id` в этом модуле.
+ * деривируется `thread_id` (§17.10), третий - метка внутри треда. Деривация делегируется
+ * `buildThreadId` (Phase 4) - без дублирующей строковой логики в этом модуле: 3-сегментная
+ * ссылка распарсивается, родительский чат резолвится, `thread_id` деривируется, а сообщение
+ * адресуется парой `{thread_id, message_timestamp}`. Бизнес-чат (`2/…`) треда не даёт (§17.10):
+ * тогда `thread` несёт `status:'unsupported'` с причиной, а не тихую пустую выдачу.
  */
+import { buildThreadId } from '../protocol/threadId.js';
 import type { RegistryHttpClient } from '../transport/RegistryHttpClient.js';
 import { asObject, stringOr } from '../util/json.js';
 import { parseMicros } from '../util/timestamps.js';
@@ -57,26 +59,38 @@ export interface ParsedJoinLink {
   segments: 2 | 3;
 }
 
-/** Пометка «сообщение в треде»: `thread_id` деривируется в Phase 4 (`buildThreadId`) */
-export interface LinkThreadPending {
-  /** Метка сообщения внутри треда (третий сегмент ссылки) */
-  message_timestamp: string;
-  /** Точка расширения: деривация `thread_id` из parent_chat_id+timestamp приезжает в Phase 4 */
-  pending_phase4: 'thread_id derivation (buildThreadId) arrives in Phase 4';
-}
+/**
+ * Сообщение в треде (3-сегментная ссылка). `thread_id` деривирован из родительского чата и
+ * метки родителя (`buildThreadId`, §17.10); бизнес-чат треда не даёт - тогда `unsupported`.
+ */
+export type LinkThreadTarget =
+  | {
+      status: 'resolved';
+      /** Дериватив `thread_id` (валидный ChatId треда) */
+      thread_id: string;
+      /** Метка сообщения ВНУТРИ треда (третий сегмент ссылки) */
+      message_timestamp: string;
+    }
+  | {
+      status: 'unsupported';
+      /** Причина недоступности треда (напр. бизнес-чат, §17.10) */
+      reason: string;
+      /** Метка сообщения внутри треда (третий сегмент) - сохраняется для диагностики */
+      message_timestamp: string;
+    };
 
 export interface ResolvedLink {
   /** Родительский чат, резолвнутый по invite_hash */
   chat_id: string;
-  /** Метка адресуемого сообщения (мкс строкой) */
+  /** Метка адресуемого сообщения (мкс строкой); для 3-сегментной - метка родителя треда */
   timestamp: string;
   invite_hash: string;
   /**
    * Для 2-сегментной ссылки - `undefined` (сообщение адресуется напрямую в `chat_id`).
-   * Для 3-сегментной - пометка треда: `chat_id`+`timestamp` дают parent, а сообщение в треде
-   * ждёт `buildThreadId` (Phase 4).
+   * Для 3-сегментной - цель треда: `chat_id`+`timestamp` дают parent, а сообщение адресуется
+   * парой `{thread_id, message_timestamp}` (деривация `buildThreadId`, §17.10).
    */
-  thread?: LinkThreadPending;
+  thread?: LinkThreadTarget;
 }
 
 export interface ResolveLinkDeps {
@@ -152,8 +166,9 @@ function extractChatId(response: GetChatsInfoResponse): string | undefined {
  * Разбирает join-ссылку и резолвит родительский чат через `get_chats_info {invite_hash}`.
  *
  * 2-сегментная ссылка резолвится ПОЛНОСТЬЮ в `{chat_id, timestamp}`. 3-сегментная резолвит
- * родительский чат и возвращает пометку `thread` - деривация `thread_id` для сообщения в треде
- * достраивается в Phase 4 (`buildThreadId`), здесь дубля деривации нет.
+ * родительский чат и деривирует `thread_id` (`buildThreadId`, §17.10), возвращая цель треда в
+ * `thread`; сама деривация делегирована - дубля строковой логики тут нет. Бизнес-чат треда не
+ * даёт (§17.10) - тогда `thread.status:'unsupported'`.
  */
 export async function resolveLink(deps: ResolveLinkDeps, input: string): Promise<ResolvedLink> {
   const parsed = parseJoinLink(input);
@@ -172,13 +187,19 @@ export async function resolveLink(deps: ResolveLinkDeps, input: string): Promise
   if (parsed.segments === 2) {
     return { chat_id: chatId, timestamp: parsed.timestamp, invite_hash: parsed.invite_hash };
   }
+
+  /* 3 сегмента: parent = chat_id+timestamp, thread_id деривируется из них (§17.10) */
+  const messageTimestamp = parsed.thread_message_timestamp!;
+  const built = buildThreadId(chatId, parsed.timestamp);
+  const thread: LinkThreadTarget =
+    built.status === 'ok'
+      ? { status: 'resolved', thread_id: built.thread_id, message_timestamp: messageTimestamp }
+      : { status: 'unsupported', reason: built.reason, message_timestamp: messageTimestamp };
+
   return {
     chat_id: chatId,
     timestamp: parsed.timestamp,
     invite_hash: parsed.invite_hash,
-    thread: {
-      message_timestamp: parsed.thread_message_timestamp!,
-      pending_phase4: 'thread_id derivation (buildThreadId) arrives in Phase 4',
-    },
+    thread,
   };
 }

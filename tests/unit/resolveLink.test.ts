@@ -86,16 +86,28 @@ describe('resolveLink: 2-сегментная резолвится полнос�
   });
 });
 
-describe('resolveLink: 3-сегментная - чат резолвится, thread_id ждёт Phase 4', () => {
-  it('возвращает parent chat_id и пометку треда, БЕЗ деривации thread_id', async () => {
+describe('resolveLink: 3-сегментная - чат резолвится, thread_id деривируется (Phase 4)', () => {
+  it('возвращает parent chat_id и цель треда с деривированным thread_id', async () => {
     const deps = fakeHttp({ chats: [{ chat_id: CHAT_ID }] });
 
     const resolved = await resolveLink(deps, `https://x/join/abc-hash/${TAIL}/1784288000000000`);
 
     expect(resolved.chat_id).toBe(CHAT_ID);
     expect(resolved.timestamp).toBe(TAIL);
-    expect(resolved.thread?.message_timestamp).toBe('1784288000000000');
-    /* Точка расширения: сама деривация thread_id (buildThreadId) приезжает в Phase 4 */
-    expect(resolved.thread?.pending_phase4).toMatch(/Phase 4/);
+    if (resolved.thread?.status !== 'resolved') throw new Error('ожидался resolved thread');
+    /* thread_id = `10<prefix>/<ns>/<rest>_<parent_ts>` (§17.10, radix 10) */
+    expect(resolved.thread.thread_id).toBe(`100/0/11111111-1111-1111-1111-111111111111_${TAIL}`);
+    expect(resolved.thread.message_timestamp).toBe('1784288000000000');
+  });
+
+  it('бизнес-чат (префикс 2) -> thread unsupported, а не тихий отказ', async () => {
+    const businessChat = '2/1234/11111111-1111-1111-1111-111111111111';
+    const deps = fakeHttp({ chats: [{ chat_id: businessChat }] });
+
+    const resolved = await resolveLink(deps, `https://x/join/abc-hash/${TAIL}/1784288000000000`);
+
+    if (resolved.thread?.status !== 'unsupported') throw new Error('ожидался unsupported thread');
+    expect(resolved.thread.reason).toMatch(/недоступен/);
+    expect(resolved.thread.message_timestamp).toBe('1784288000000000');
   });
 });

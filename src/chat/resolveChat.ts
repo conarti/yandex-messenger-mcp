@@ -12,6 +12,7 @@
  */
 import type { SearchEntity } from '../config/defaults.js';
 import { searchWithEscalation, type SearchDeps } from '../protocol/search.js';
+import { isThreadId } from '../protocol/threadId.js';
 import { asObject, stringOr } from '../util/json.js';
 
 /** Приватный чат: `<guidA>_<guidB>` (§5) */
@@ -43,7 +44,8 @@ export type ResolveChatResult =
   | { status: 'not_found' };
 
 export function isChatId(value: string): boolean {
-  return PRIVATE_CHAT_ID.test(value) || GROUP_CHAT_ID.test(value);
+  /* thread_id - тоже валидный ChatId: тред = чат (§17.10), send_message шлёт в него как в чат */
+  return PRIVATE_CHAT_ID.test(value) || GROUP_CHAT_ID.test(value) || isThreadId(value);
 }
 
 /**

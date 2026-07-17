@@ -13,12 +13,13 @@
  * (кто/что/когда), а не только обрезанные сиблинги. Обогащённая выдача `message_info` уже несёт
  * агрегаты; детальная выборка их дополняет.
  *
- * ТРЁХСЕГМЕНТНАЯ ССЫЛКА (сообщение в треде) распознаётся, но НЕ адресуется: деривация
- * `thread_id` приезжает в Phase 4 (`buildThreadId`). Такой запрос возвращает `thread_message_pending`
- * с распознанными сегментами - это честная точка расширения, а не тихий отказ.
+ * ТРЁХСЕГМЕНТНАЯ ССЫЛКА (сообщение в треде) АДРЕСУЕТСЯ (Phase 4). `resolveLink` деривирует
+ * `thread_id` (§17.10, `buildThreadId`), и сообщение достаётся `message_info` по паре
+ * `{thread_id, message_timestamp}` - тем же путём, что обычное сообщение. Бизнес-чат треда не
+ * даёт (§17.10): тогда возвращается `thread_unsupported` с причиной, а не тихий отказ.
  */
 import { resolveChat, type ChatCandidate } from '../../chat/resolveChat.js';
-import { resolveLink, parseJoinLink } from '../../chat/resolveLink.js';
+import { resolveLink } from '../../chat/resolveLink.js';
 import { getMessageInfo, type MessageInfoResult } from '../../protocol/messageInfo.js';
 import { listReactions, type MessageReactionsDetail } from '../../protocol/reactions.js';
 import type { ToolDeps } from './deps.js';
@@ -43,13 +44,13 @@ export type GetMessageResult =
       reactions_detail?: MessageReactionsDetail;
     } & MessageInfoResult)
   | {
-      /** 3-сегментная join-ссылка: сообщение в треде, thread_id - Phase 4 (`buildThreadId`) */
-      status: 'thread_message_pending';
+      /** 3-сегментная join-ссылка на бизнес-чат: тред недоступен (§17.10), деривации нет */
+      status: 'thread_unsupported';
       parent_chat_id: string;
       invite_hash: string;
       thread_root_timestamp: string;
       thread_message_timestamp: string;
-      note: string;
+      reason: string;
     }
   | { status: 'ambiguous_chat'; candidates: ChatCandidate[] }
   | { status: 'chat_not_found'; query: string }
@@ -138,20 +139,27 @@ async function resolveTarget(deps: ToolDeps, input: GetMessageInput, myGuid: str
 async function resolveByUrl(deps: ToolDeps, url: string): Promise<TargetResolution> {
   const link = await resolveLink({ http: deps.http }, url);
   if (link.thread !== undefined) {
-    /* 3-сегментная: сообщение в треде. thread_id деривируется в Phase 4 - распознаём, не адресуем */
-    const parsed = parseJoinLink(url);
+    /* 3-сегментная: сообщение в треде. thread_id деривирован resolveLink (§17.10) */
+    if (link.thread.status === 'unsupported') {
+      return {
+        kind: 'result',
+        result: {
+          status: 'thread_unsupported',
+          parent_chat_id: link.chat_id,
+          invite_hash: link.invite_hash,
+          thread_root_timestamp: link.timestamp,
+          thread_message_timestamp: link.thread.message_timestamp,
+          reason: link.thread.reason,
+        },
+      };
+    }
+    /* Тред = чат: сообщение адресуется message_info по паре {thread_id, message_timestamp} */
     return {
-      kind: 'result',
-      result: {
-        status: 'thread_message_pending',
-        parent_chat_id: link.chat_id,
-        invite_hash: link.invite_hash,
-        thread_root_timestamp: link.timestamp,
-        thread_message_timestamp: link.thread.message_timestamp,
-        note:
-          'Сообщение в треде: адресация требует деривации thread_id (buildThreadId, §17.10), ' +
-          'которая приходит в Phase 4. Сегменты ссылки распознаны' +
-          (parsed !== undefined ? `: ${parsed.segments} сегмента` : ''),
+      kind: 'target',
+      value: {
+        chatId: link.thread.thread_id,
+        timestamp: link.thread.message_timestamp,
+        inviteHash: link.invite_hash,
       },
     };
   }

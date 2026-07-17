@@ -9,7 +9,9 @@ import { downloadAttachment } from './mcp/tools/downloadAttachment.js';
 import { getHistory, DEFAULT_HISTORY_LIMIT } from './mcp/tools/getHistory.js';
 import { getMessage } from './mcp/tools/getMessage.js';
 import { getMessageContext, DEFAULT_CONTEXT_WINDOW } from './mcp/tools/getMessageContext.js';
+import { getThread, DEFAULT_THREAD_LIMIT } from './mcp/tools/getThread.js';
 import { listChats } from './mcp/tools/listChats.js';
+import { joinThread, leaveThread } from './protocol/threads.js';
 import { search } from './mcp/tools/search.js';
 import { sendMessage } from './mcp/tools/sendMessage.js';
 import type { Logger } from './util/logger.js';
@@ -23,9 +25,12 @@ export const TOOL_NAMES = [
   'get_history',
   'get_message',
   'get_message_context',
+  'get_thread',
   'search',
   'send_message',
   'download_attachment',
+  'join_to_thread',
+  'leave_thread',
 ] as const;
 
 export interface CreateServerOptions {
@@ -215,6 +220,54 @@ export function createServer(options: CreateServerOptions): McpServer {
   );
 
   server.registerTool(
+    'get_thread',
+    {
+      title: 'Get thread',
+      description:
+        'Сообщения треда как микро-чата. Адресуется либо готовым thread_id, либо парой ' +
+        'chat + message_id родительского сообщения (деривация thread_id, «Обсудить»). ' +
+        'Пустой тред (ещё не материализован) возвращается с empty:true - первое сообщение в него ' +
+        'отправляется через send_message с этим thread_id как ChatId.',
+      inputSchema: {
+        thread_id: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Готовый ChatId треда (альтернатива паре chat + message_id)'),
+        chat: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Родительский чат: ChatId либо поисковый запрос; нужен вместе с message_id'),
+        message_id: z
+          .string()
+          .regex(/^\d+$/)
+          .optional()
+          .describe('Timestamp родительского сообщения в микросекундах (строка); нужен вместе с chat'),
+        limit: z
+          .int()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe(`Максимум сообщений треда (по умолчанию ${DEFAULT_THREAD_LIMIT})`),
+        before: z
+          .string()
+          .regex(/^\d+$/)
+          .optional()
+          .describe('Курсор: timestamp в микросекундах (строка). Вернуть сообщения строго старше него'),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      try {
+        return jsonResult(await getThread(deps, args));
+      } catch (error) {
+        return errorResult('get_thread', error, logger);
+      }
+    },
+  );
+
+  server.registerTool(
     'search',
     {
       title: 'Search messenger',
@@ -311,6 +364,47 @@ export function createServer(options: CreateServerOptions): McpServer {
         return jsonResult(await downloadAttachment(deps, args));
       } catch (error) {
         return errorResult('download_attachment', error, logger);
+      }
+    },
+  );
+
+  server.registerTool(
+    'join_to_thread',
+    {
+      title: 'Join thread',
+      description:
+        'Подписка на тред по thread_id (§17.10). Это вступление в тред, не создание и не отправка. ' +
+        'Легко откатывается leave_thread, поэтому confirm не требует.',
+      inputSchema: {
+        thread_id: z.string().min(1).describe('ChatId треда (дериватив get_thread)'),
+      },
+      /* Подписка, а не необратимая мутация контента: destructive:false, идемпотентна (повтор безопасен) */
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async (args) => {
+      try {
+        return jsonResult(await joinThread(deps.http, args.thread_id));
+      } catch (error) {
+        return errorResult('join_to_thread', error, logger);
+      }
+    },
+  );
+
+  server.registerTool(
+    'leave_thread',
+    {
+      title: 'Leave thread',
+      description: 'Выход из треда по thread_id (§17.10). Отписка; ничего не разрушает, confirm не требует.',
+      inputSchema: {
+        thread_id: z.string().min(1).describe('ChatId треда (дериватив get_thread)'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async (args) => {
+      try {
+        return jsonResult(await leaveThread(deps.http, args.thread_id));
+      } catch (error) {
+        return errorResult('leave_thread', error, logger);
       }
     },
   );
