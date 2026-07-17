@@ -18,6 +18,26 @@ function putFile(name: string, ageDays: number): string {
   return path;
 }
 
+/**
+ * Кладёт файл с ТОЧНЫМ mtime. Нужен там, где проверяется граница TTL.
+ *
+ * Секунды берутся целыми осознанно: `utimesSync` принимает секунды, и деление
+ * произвольной мс-метки на 1000 не отыгрывается обратно точно - mtimeMs выходит
+ * вроде `...401.999`, то есть на доли миллисекунды НИЖЕ задуманного. На границе
+ * это решает исход, поэтому метка должна быть представима в секундах без остатка.
+ */
+function putFileAtExactly(name: string, mtimeMs: number): string {
+  const path = join(downloadsDir, name);
+  writeFileSync(path, 'x');
+  utimesSync(path, mtimeMs / 1000, mtimeMs / 1000);
+  return path;
+}
+
+/** Целая секунда: единственная метка, которую utimesSync отдаёт обратно без потерь */
+function wholeSecondAnchor(): number {
+  return Math.floor(Date.now() / 1000) * 1000;
+}
+
 beforeEach(() => {
   workDir = mkdtempSync(join(tmpdir(), 'ymm-sweep-'));
   downloadsDir = join(workDir, 'downloads');
@@ -40,13 +60,33 @@ describe('sweepDownloads', () => {
     expect(result).toEqual({ removed: 1, kept: 1 });
   });
 
+  /*
+   * Граница строится от ОДНОГО якоря, а не от двух чтений часов. Прежняя версия брала
+   * mtime из `Date.now()` в putFile, а `now` - из второго `Date.now()` мгновением позже:
+   * deadline оказывался на миллисекунду впереди mtime, файл проходил как «строго старше»
+   * и удалялся. Тест зеленел, только когда оба чтения попадали в одну миллисекунду, то
+   * есть был гонкой (живьём падал в ~5 прогонах из 8). Здесь mtime == deadline по
+   * построению, и проверяется ровно заявленное: ровно на границе - НЕ удаляем.
+   */
   it('файл ровно на границе TTL остаётся: удаляем строго старше', async () => {
-    const edge = putFile('edge.bin', 0);
-    /* now сдвинут ровно на TTL: mtime == deadline */
-    const result = await sweepDownloads({ downloadsDir, ttlDays: 7, now: Date.now() + 7 * DAY_MS });
+    const anchor = wholeSecondAnchor();
+    const edge = putFileAtExactly('edge.bin', anchor);
+
+    /* now = anchor + TTL => deadline = anchor = mtime файла */
+    const result = await sweepDownloads({ downloadsDir, ttlDays: 7, now: anchor + 7 * DAY_MS });
 
     expect(existsSync(edge)).toBe(true);
     expect(result.removed).toBe(0);
+  });
+
+  it('файл на миллисекунду старше границы удаляется: граница именно строгая', async () => {
+    const anchor = wholeSecondAnchor();
+    const justOver = putFileAtExactly('just-over.bin', anchor - 1);
+
+    const result = await sweepDownloads({ downloadsDir, ttlDays: 7, now: anchor + 7 * DAY_MS });
+
+    expect(existsSync(justOver)).toBe(false);
+    expect(result.removed).toBe(1);
   });
 
   it('ttlDays <= 0 отключает подметание, а не стирает всё', async () => {

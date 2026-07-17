@@ -4,9 +4,20 @@
  * Референсные байты заголовков сняты с живого клиента (§2.2), синтетика помечена явно:
  * кадры PROXY_STATUS/PUSH в захвате не разбирались побайтово, их форма взята из §14.9.
  */
+import { Packr } from 'msgpackr';
 import { describe, expect, it } from 'vitest';
 import { decodeFrame, encodeDataFrame } from '../../src/transport/ws/frameCodec.js';
 import { FrameType } from '../../src/transport/ws/frameTypes.js';
+
+/**
+ * Независимый msgpack-оракул для cross-check (Fork b, митигация выбора B2).
+ *
+ * `useRecords:false` - осознанно: по умолчанию msgpackr кодирует объекты своим
+ * расширением «records», то есть говорит на диалекте, а не на чистом msgpack.
+ * Наши заголовки - массивы примитивов, их это не затрагивает, но оракул обязан
+ * быть эталоном спеки, а не эталоном библиотеки.
+ */
+const packr = new Packr({ useRecords: false });
 
 /** Заголовки из §2.2: тип кадра + msgpack [0, seq, method] */
 const REFERENCE_HEADERS: Record<string, { seq: number; hex: string }> = {
@@ -137,6 +148,70 @@ describe('длинные имена методов', () => {
 
     expect(frame[4]).toBe(0xda);
     expect(decodeFrame(frame).elements[2]).toBe(method);
+  });
+});
+
+/**
+ * Cross-check против независимой реализации msgpack.
+ *
+ * ЗАЧЕМ. Референсные байты §2.2 сняты с живого клиента только для seq 1/2/5/9 и коротких
+ * имён - ровно там, где ручной кодек тривиален. Настоящая поверхность корректности B2 (по
+ * его же Cons) лежит дальше: varint-границы seq (fixint -> uint8 -> uint16 -> uint32) и
+ * str8/str16 для длинных имён. Живого эталона на них нет, поэтому эталоном выступает
+ * msgpackr: две независимые реализации, сверка байт-в-байт.
+ */
+describe('cross-check против msgpackr', () => {
+  const CROSS_CHECK_CASES: [seq: number, method: string][] = [
+    /* Захваченные §2.2: якорь, что оракул и живой клиент говорят об одном */
+    [1, 'whoami'],
+    [5, 'push'],
+    /* Границы msgpack uint - живого эталона на них НЕТ */
+    [127, 'history'],
+    [128, 'history'],
+    [255, 'history'],
+    [256, 'history'],
+    [65535, 'history'],
+    [65536, 'history'],
+    [4294967295, 'history'],
+    /* str8 / str16 - тоже без живого эталона */
+    [3, 'a'.repeat(40)],
+    [3, 'b'.repeat(300)],
+  ];
+
+  it.each(CROSS_CHECK_CASES)('заголовок [0, %i, method(len)] совпадает с msgpackr байт-в-байт', (seq, method) => {
+    const reference = packr.pack([0, seq, method]);
+
+    const frame = encodeDataFrame({ serviceIndex: 0, reqId: seq, method, payload: {} });
+
+    /* Байт 0 - тип кадра, он вне msgpack: сверяем ровно заголовок */
+    expect(frame.subarray(1, 1 + reference.length).toString('hex')).toBe(reference.toString('hex'));
+  });
+
+  /*
+   * Декод всех трёх арностей на заголовках, собранных ЧУЖОЙ реализацией. Синтетические
+   * фикстуры выше собраны руками автора кодека - у них с кодеком общий источник ошибки.
+   * Здесь заголовок строит msgpackr, поэтому общего источника нет.
+   */
+  it.each([
+    ['DATA', FrameType.Data, 0x01, [0, 7, 'history']],
+    ['PROXY_STATUS', FrameType.ProxyStatus, 0x02, [7, 6]],
+    ['PUSH', FrameType.Push, 0x03, [0, 'messenger', 'new_message', 42]],
+  ] as const)('декодирует %s-заголовок, собранный msgpackr', (_name, frameType, typeByte, elements) => {
+    const header = Buffer.concat([Buffer.from([typeByte]), packr.pack(elements)]);
+    /* PROXY_STATUS приходит без data-секции (§14.9) - у него нет ни разделителя, ни тела */
+    const hasPayload = frameType !== FrameType.ProxyStatus;
+    const separator = Buffer.alloc(12);
+    separator[0] = 0x05;
+    const payload = { RequestId: 'x' };
+    const frame = hasPayload
+      ? Buffer.concat([header, separator, Buffer.from(JSON.stringify(payload), 'utf8')])
+      : header;
+
+    const decoded = decodeFrame(frame);
+
+    expect(decoded.frameType).toBe(frameType);
+    expect(decoded.elements).toEqual([...elements]);
+    expect(decoded.payload).toEqual(hasPayload ? payload : undefined);
   });
 });
 
