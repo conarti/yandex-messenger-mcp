@@ -33,7 +33,11 @@ export type GetHistoryResult =
       messages: Message[];
       /** Курсор следующей страницы; отсутствует, когда страница пуста */
       next_before?: string;
-      /** false, если сервер отдал меньше запрошенного - дальше ничего нет */
+      /**
+       * false, если сервер отдал меньше запрошенного - дальше ничего нет.
+       * Считается по СЫРОЙ выдаче сервера, а не по `messages`: нормализация может
+       * отбросить битый элемент, и это НЕ признак конца истории.
+       */
       has_more: boolean;
     }
   | { status: 'ambiguous_chat'; candidates: ChatCandidate[] }
@@ -68,6 +72,13 @@ export async function getHistory(deps: ToolDeps, input: GetHistoryInput): Promis
   );
 
   const entry = findChatEntry(response, resolved.chat_id) as { Messages?: unknown } | undefined;
+  /*
+   * has_more считается по СЫРОЙ длине, а не по нормализованной: normalizeMessages
+   * выбрасывает неадресуемые элементы (без парсящегося Timestamp), поэтому полная
+   * страница с одним битым сообщением дала бы limit-1 -> has_more:false -> вызывающий
+   * остановил бы пагинацию и МОЛЧА потерял бы всю историю старше этой страницы.
+   */
+  const rawCount = Array.isArray(entry?.Messages) ? entry.Messages.length : 0;
   const messages = normalizeMessages(entry?.Messages);
 
   /* Сервер отдаёт страницу от старых к новым, поэтому курсор - метка первого элемента */
@@ -84,6 +95,6 @@ export async function getHistory(deps: ToolDeps, input: GetHistoryInput): Promis
     chat_id: resolved.chat_id,
     messages,
     ...(oldest !== undefined ? { next_before: oldest.timestamp_mcs } : {}),
-    has_more: messages.length >= limit,
+    has_more: rawCount >= limit,
   };
 }

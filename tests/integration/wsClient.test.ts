@@ -4,7 +4,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocketServer } from 'ws';
-import type { AddressInfo } from 'node:net';
+import { createServer } from 'node:http';
+import type { AddressInfo, Socket } from 'node:net';
 import { FakeAuthProvider } from '../../src/auth/FakeAuthProvider.js';
 import { MessengerWsClient } from '../../src/transport/ws/MessengerWsClient.js';
 import { encodeDataFrame } from '../../src/transport/ws/frameCodec.js';
@@ -18,6 +19,15 @@ const WHOAMI_RESPONSE = {
 let mock: MockXiva;
 let auth: FakeAuthProvider;
 let client: MessengerWsClient;
+
+/** Ждёт наступления факта, а не фиксированную паузу: закрытие сокета асинхронно */
+async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return predicate();
+}
 
 function createClient(): MessengerWsClient {
   return new MessengerWsClient({
@@ -299,6 +309,46 @@ describe('протухшая cookie', () => {
     });
 
     await expect(failing.connect()).rejects.toMatchObject({ name: 'AuthError', kind: 'cookie' });
+
+    failing.close();
+    await new Promise<void>((resolve) => rejecting.close(() => resolve()));
+  });
+
+  /*
+   * Регрессия на УТЕЧКУ СОКЕТА: ws зовёт свой abortHandshake ТОЛЬКО когда у события
+   * 'unexpected-response' нет слушателя (`else if (!websocket.emit(...))`). Наш слушатель
+   * есть -> emit вернул true -> очистка библиотеки подавлена. Раньше обработчик только
+   * реджектил, поэтому TCP-сокет и недренированный поток ответа висели и держали Connection.
+   *
+   * Сервер здесь СПЕЦИАЛЬНО обычный http, а не WebSocketServer: тот на отказе рвёт сокет
+   * сам (abortHandshake на своей стороне) и утечку клиента скрыл бы. keep-alive означает,
+   * что сокет закроется, только если его закроет КЛИЕНТ, - это и есть проверяемый факт.
+   */
+  it('handshake с HTTP 401 разрушает сокет: соединение не остаётся висеть', async () => {
+    const closedSockets: Socket[] = [];
+    const openedSockets: Socket[] = [];
+    const rejecting = createServer((_request, response) => {
+      response.writeHead(401, { 'Content-Type': 'text/plain', Connection: 'keep-alive' });
+      response.end('unauthorized');
+    });
+    rejecting.on('connection', (socket) => {
+      openedSockets.push(socket);
+      socket.once('close', () => closedSockets.push(socket));
+    });
+    await new Promise<void>((resolve) => rejecting.listen(0, '127.0.0.1', resolve));
+    const { port } = rejecting.address() as AddressInfo;
+    const failing = new MessengerWsClient({
+      auth,
+      xivaUrl: `ws://127.0.0.1:${port}/v2/subscribe/websocket`,
+      xivaServiceName: 'messenger-prod',
+      requestTimeoutMs: 2_000,
+    });
+
+    await expect(failing.connect()).rejects.toMatchObject({ name: 'AuthError', kind: 'cookie' });
+
+    expect(openedSockets).toHaveLength(1);
+    /* До фикса сокет доживал до keep-alive-таймаута сервера (5с), т.е. в это окно не закрывался */
+    await expect(waitFor(() => closedSockets.length === 1)).resolves.toBe(true);
 
     failing.close();
     await new Promise<void>((resolve) => rejecting.close(() => resolve()));

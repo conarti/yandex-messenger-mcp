@@ -172,6 +172,40 @@ describe('get_history', () => {
     expect(result.has_more).toBe(true);
   });
 
+  /*
+   * Регрессия на ТИХУЮ ПОТЕРЮ ИСТОРИИ: has_more считался по нормализованному массиву,
+   * а normalizeMessages выбрасывает элементы без парсящейся метки. Полная страница с одним
+   * битым сообщением давала limit-1 -> has_more:false -> вызывающий останавливал пагинацию
+   * и терял ВСЮ историю старше этой страницы, ничего об этом не узнав.
+   */
+  it('has_more остаётся true, когда сервер отдал полную страницу, но элемент не нормализовался', async () => {
+    const brokenMessage = {
+      ServerMessage: {
+        ClientMessage: { Plain: { ChatId: CHAT_ID, Text: { MessageText: 'без метки' } } },
+        /* Метки нет -> сообщение неадресуемо -> normalizeMessages его выбросит */
+        ServerMessageInfo: { SeqNo: 2, Deleted: false, From: { Guid: 'bbbbbbbb-5555-6666-7777-888888888888' } },
+      },
+    };
+    const { deps } = makeDeps({
+      wsRequest: async () => ({
+        Chats: [
+          {
+            ChatId: CHAT_ID,
+            Messages: [message(1784117000000000, 'целое'), brokenMessage, message(1784117592261029, 'целое')],
+          },
+        ],
+      }),
+    });
+
+    const result = await getHistory(deps, { chat: CHAT_ID, limit: 3 });
+
+    if (result.status !== 'ok') throw new Error('ожидался ok');
+    /* Битое до вызывающего не доезжает - это правильно */
+    expect(result.messages).toHaveLength(2);
+    /* ...но страница БЫЛА полной, значит история продолжается */
+    expect(result.has_more).toBe(true);
+  });
+
   it('рефы вложений доезжают до выдачи, но ничего не качается', async () => {
     const { deps } = makeDeps({
       wsRequest: async () => ({

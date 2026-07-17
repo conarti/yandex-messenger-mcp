@@ -105,6 +105,26 @@ describe('searchWithEscalation', () => {
     expect(outcome.buckets['messages']).toHaveLength(100);
   });
 
+  /*
+   * Регрессия на ВРУЩИЙ finalLimit: он считался как limit/FACTOR от ОТВЕРГНУТОГО limit,
+   * но эскалация клампится о клиентский потолок (320 -> min(1280, 1000) = 1000).
+   * Обратное деление давало 250 - limit, на котором не было ни одного запроса.
+   */
+  it('finalLimit при отказе = последний УДАЧНЫЙ limit, даже если эскалация клампилась о потолок', async () => {
+    /* Сервер отвечает на 320, но валит поднятый до потолка 1000 */
+    const { http, calls } = fakeServer({ messages: 5000 }, { ceiling: 500 });
+
+    const outcome = await searchWithEscalation({ http }, { query: 'терм', entities: ['messages'], startLimit: 320 });
+
+    /* 320*4 = 1280 -> склампилось в 1000 -> отказ; 1000/4 = 250 никогда не запрашивался */
+    expect(calls).toEqual([320, 1000]);
+    expect(outcome.finalLimit).toBe(320);
+    expect(outcome.buckets['messages']).toHaveLength(320);
+    expect(outcome.truncated).toBe(true);
+    expect(outcome.truncationReason).toContain('limit=320');
+    expect(outcome.truncationReason).not.toContain('limit=250');
+  });
+
   it('первый же серверный отказ пробрасывается, а не выдаётся за усечённый успех', async () => {
     const { http } = fakeServer({ messages: 500 }, { ceiling: 10 });
 

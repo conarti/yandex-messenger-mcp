@@ -110,6 +110,60 @@ describe('CookieAuthProvider', () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 
+  /*
+   * Регрессия на ГОНКУ ИНВАЛИДАЦИИ: onAuthFailure() чистил кэш, но build(), стартовавший
+   * до него, резолвился позже и переприсваивал cached - возвращая в кэш МЁРТВУЮ cookie,
+   * ту самую, из-за которой инвалидация и случилась.
+   */
+  it('инвалидация побеждает гонку: build(), стартовавший до onAuthFailure, не пишет кэш', async () => {
+    const profile = new FakeProfile();
+    let releaseFirst!: (result: RequestUserResult) => void;
+    let markFirstCallSeen!: () => void;
+    const firstCallSeen = new Promise<void>((resolve) => {
+      markFirstCallSeen = resolve;
+    });
+    const firstResult = new Promise<RequestUserResult>((resolve) => {
+      releaseFirst = resolve;
+    });
+
+    let calls = 0;
+    const load = vi.fn(async (): Promise<RequestUserResult> => {
+      calls += 1;
+      if (calls === 1) {
+        markFirstCallSeen();
+        return firstResult;
+      }
+      return { user: WHOAMI };
+    });
+    const auth = provider(profile, load);
+
+    const inflight = auth.getAuthContext();
+    await firstCallSeen; /* build гарантированно висит на request_user */
+    await auth.onAuthFailure(); /* инвалидация посреди сборки */
+    releaseFirst({ user: WHOAMI }); /* мёртвая cookie резолвится уже ПОСЛЕ инвалидации */
+    await inflight;
+
+    await auth.getAuthContext();
+
+    /* Пересборка обязана случиться: отданный кэш означал бы возврат отозванной cookie */
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  /*
+   * Регрессия на ПАРАЛЛЕЛЬНЫЕ РЕФРЕШИ: getAuthContext() схлопывал их, а onAuthFailure() - нет.
+   * Одновременный отказ на WS и на скачивании поднимал два launchPersistentContext на одном
+   * profileDir -> singleton-lock Chromium.
+   */
+  it('onAuthFailure схлопывает параллельные рефреши в один запуск браузера', async () => {
+    const profile = new FakeProfile();
+    const auth = provider(profile, async () => ({ user: WHOAMI }));
+    await auth.getAuthContext();
+
+    await Promise.all([auth.onAuthFailure(), auth.onAuthFailure()]);
+
+    expect(profile.refreshCalls).toBe(1);
+  });
+
   it('прокидывает secretSign, если сервер его прислал (гостевая ветка)', async () => {
     const auth = provider(new FakeProfile(), async () => ({
       user: WHOAMI,

@@ -100,6 +100,12 @@ export async function searchWithEscalation(deps: SearchDeps, input: SearchInput)
   }
 
   let limit = input.startLimit;
+  /*
+   * limit, на котором собрана выдача в `buckets`. Отдельная переменная, а не арифметика
+   * от отвергнутого limit: эскалация КЛАМПИТСЯ о потолок (320 -> min(1280, 1000) = 1000),
+   * поэтому обратное деление на FACTOR соврало бы (250 вместо 320).
+   */
+  let collectedAtLimit = input.startLimit;
   let requests = 0;
   let buckets: Record<string, unknown[]> = {};
   let totals: Record<string, number> = {};
@@ -115,22 +121,26 @@ export async function searchWithEscalation(deps: SearchDeps, input: SearchInput)
     } catch (error) {
       /* Упёрлись в неизвестный потолок сервера: отдаём последнее удачное, но ЯВНО помечаем */
       if (requests > 0) {
-        deps.logger?.warn('search: сервер отверг поднятый limit, отдаём последнюю удачную выдачу', { limit });
+        deps.logger?.warn('search: сервер отверг поднятый limit, отдаём последнюю удачную выдачу', {
+          limit,
+          collectedAtLimit,
+        });
         return {
           buckets,
           startLimit: input.startLimit,
-          finalLimit: Math.floor(limit / SEARCH_LIMIT_FACTOR),
+          finalLimit: collectedAtLimit,
           requests,
           truncated: true,
           truncationReason:
             `сервер отверг limit=${limit} (${error instanceof Error ? error.message : String(error)}); ` +
-            `результат собран на limit=${Math.floor(limit / SEARCH_LIMIT_FACTOR)} и может быть неполным`,
+            `результат собран на limit=${collectedAtLimit} и может быть неполным`,
         };
       }
       throw error;
     }
 
     requests += 1;
+    collectedAtLimit = limit;
     buckets = {};
     totals = {};
     for (const entity of input.entities) {

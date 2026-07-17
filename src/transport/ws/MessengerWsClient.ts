@@ -19,6 +19,7 @@
  */
 import WebSocket from 'ws';
 import { randomBytes } from 'node:crypto';
+import type { ClientRequest, IncomingMessage } from 'node:http';
 import { AuthError, type AuthProvider } from '../../auth/AuthProvider.js';
 import {
   mapResponseStatus,
@@ -401,9 +402,18 @@ export class MessengerWsClient {
         cleanup();
         reject(error);
       };
-      const onUnexpectedResponse = (_request: unknown, response: { statusCode?: number }): void => {
+      /*
+       * ws вызывает abortHandshake ТОЛЬКО если у события нет слушателя
+       * (`else if (!websocket.emit('unexpected-response', req, res))`): наличие этого
+       * обработчика подавляет собственную очистку библиотеки, поэтому TCP-сокет и
+       * недренированный поток ответа закрываем сами - иначе они висят и держат весь
+       * граф Connection до таймаута keep-alive.
+       */
+      const onUnexpectedResponse = (request: ClientRequest, response: IncomingMessage): void => {
         cleanup();
         const status = response.statusCode ?? 0;
+        response.destroy();
+        request.destroy();
         reject(
           status === 401 || status === 403
             ? new AuthError(`ws: handshake отверг cookie (HTTP ${status})`, 'cookie')
