@@ -27,6 +27,7 @@ import type { AttachmentRef } from './attachmentRefs.js';
 import { normalizeMessage, type Message, type MessageSender } from './messageShape.js';
 import { asObject, numberOr, stringOr } from '../util/json.js';
 import { microsToIso, parseMicros } from '../util/timestamps.js';
+import { renderReactions, type ReactionMap, type RenderedReaction } from '../config/reactionMap.js';
 
 /** Прочтение конкретным пользователем (сиблинг `RecentUserReads`, §11.2) */
 export interface ReadReceipt {
@@ -107,14 +108,22 @@ export interface EnrichedMessage extends Message {
   reads: MessageReads;
   mentions: MentionRef[];
   reactions_raw: ReactionsRaw;
+  /**
+   * Финальная форма реакций через карту (Phase 2): `{type, name, emoji, count?, unknown?}`.
+   * Присутствует, только когда в `ctx` передан `reactionMap`; иначе доступен лишь `reactions_raw`.
+   */
+  reactions?: RenderedReaction[];
   thread: ThreadInfo;
   forwarded: ForwardedOriginal[];
 }
 
 export interface EnrichContext {
   myGuid: string;
-  /** Зарезервировано для Phase 2 (маппинг реакций по карте); в Phase 1 не используется */
-  reactionMap?: unknown;
+  /**
+   * Карта реакций (Phase 2). Если передана, сырые `type` из `reactions_raw.items`
+   * отрисовываются в `reactions` (name/emoji/unknown); без неё поле `reactions` не появляется.
+   */
+  reactionMap?: ReactionMap;
   /** Сырой `ServerMessage`-уровень: то, что `normalizeMessage` отбросил */
   siblings: unknown;
 }
@@ -322,6 +331,7 @@ function buildForwarded(siblings: Record<string, unknown>): ForwardedOriginal[] 
 export function enrichMessage(base: Message, ctx: EnrichContext): EnrichedMessage {
   const siblings = asObject(ctx.siblings) ?? {};
   const fromGuid = base.from.guid;
+  const reactionsRaw = buildReactionsRaw(siblings);
 
   return {
     ...base,
@@ -329,7 +339,12 @@ export function enrichMessage(base: Message, ctx: EnrichContext): EnrichedMessag
     from_me: fromGuid.length === 0 ? null : fromGuid === ctx.myGuid,
     reads: buildReads(siblings),
     mentions: buildMentions(siblings),
-    reactions_raw: buildReactionsRaw(siblings),
+    reactions_raw: reactionsRaw,
+    /* Карта передана -> отрисовываем сырые type в name/emoji; неизвестный виден как unknown,
+     * Count сходится (отрисовываются все элементы). Без карты остаётся только reactions_raw */
+    ...(ctx.reactionMap !== undefined
+      ? { reactions: renderReactions(reactionsRaw.items, ctx.reactionMap) }
+      : {}),
     thread: buildThread(siblings),
     forwarded: buildForwarded(siblings),
   };

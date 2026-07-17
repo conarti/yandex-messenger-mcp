@@ -1,0 +1,660 @@
+{
+  "_comment": "Карта Reaction.Type (int) -> реакция Яндекс Мессенджера. Снято 2026-07-17, бандл 0x421b6bd.",
+  "_warning": "Яндекс НЕ рендерит Unicode-эмодзи: реакция - это PNG-артворк с сервера. Поле emoji - НАША аппроксимация артворка для текстового вывода, а не то, что отдаёт сервер. Авторитетны name (имя ассета с сервера) и сам артворк.",
+  "captured_at": "2026-07-17",
+  "bundle_hash": "0x421b6bd",
+  "asset_url_template": "https://files.messenger.yandex.net/reactions/{type}/{size}",
+  "asset_sizes_seen": [
+    "small"
+  ],
+  "picker_config_url": "https://tools.messenger.yandex.net/config.json",
+  "evidence_levels": {
+    "LIVE_CLICK": "клик по эмодзи в веб-пикере -> list_reactions вернул этот int. Доказано живьём.",
+    "LIVE_PICKER_VISUAL": "официальный веб отрисовал этот эмодзи на позиции с этим type в src (развёрнутый пикер, все 29 типов). Клик не делался, но прочтение артворка подтверждено официальным UI.",
+    "ASSET": "артворк отдан сервером по /reactions/{type} + имя ассета из 301-редиректа. Эмодзи - визуальное прочтение артворка.",
+    "CODEPOINT_SELF_EVIDENT": "int == Unicode-кодпоинт эмодзи И имя ассета совпадает по смыслу."
+  },
+  "type_space_is_open": true,
+  "type_space_note": "Сервер НЕ валидирует Type: push с 1 и 999999 принят (Status:1 FULLY_COMMITTED) и прочитан обратно дословно. Неизвестный int - достижимое состояние, не гипотеза. Официальный веб на неизвестном type рендерит битую картинку (404, naturalWidth=0) - фолбэка у него нет.",
+  "versioned_types": {
+    "100102": 2,
+    "100103": 2
+  },
+  "versioned_note": "У этих типов веб добавляет ?version=N к URL ассета (карта из ui.chunk.js). На wire-значение Type не влияет.",
+  "picker_sets": {
+    "reactions_by_namespace": {
+      "default_team": [
+        100109,
+        100108,
+        100104,
+        100102,
+        100103,
+        100107,
+        100106,
+        100105,
+        100110,
+        100101
+      ],
+      "default": [
+        100109,
+        100108,
+        100104,
+        100102,
+        100103,
+        100106,
+        100105,
+        100110,
+        100101
+      ],
+      "private": [
+        100109,
+        100108,
+        100104,
+        100102,
+        100103,
+        100106,
+        100105,
+        100110,
+        100101
+      ],
+      "8": [
+        100109,
+        100108,
+        100104,
+        100102,
+        100103,
+        100107,
+        100106,
+        100105,
+        100110,
+        100101
+      ],
+      "__march8_default": [
+        100109,
+        100108,
+        100104,
+        100102,
+        100103,
+        100106,
+        100105,
+        100110,
+        100101,
+        100132,
+        100133
+      ],
+      "__march8_private": [
+        100109,
+        100108,
+        100104,
+        100102,
+        100103,
+        100106,
+        100105,
+        100110,
+        100101,
+        100132,
+        100133
+      ],
+      "__march8_8": [
+        100109,
+        100108,
+        100104,
+        100102,
+        100103,
+        100106,
+        100105,
+        100110,
+        100101,
+        100132,
+        100133
+      ],
+      "__ny_default_team": [
+        100109,
+        100108,
+        100104,
+        100008,
+        100009,
+        100107,
+        100106,
+        100105,
+        100110,
+        100101,
+        127818
+      ],
+      "__ny_default": [
+        100109,
+        100108,
+        100104,
+        100008,
+        100009,
+        100106,
+        100105,
+        100110,
+        100101,
+        127818
+      ],
+      "__ny_private": [
+        100109,
+        100108,
+        100104,
+        100008,
+        100009,
+        100106,
+        100105,
+        100110,
+        100101,
+        127818
+      ],
+      "__sept3_default_team": [
+        100109,
+        100108,
+        100004,
+        100102,
+        100103,
+        100107,
+        100106,
+        100105,
+        100110,
+        100101,
+        100003
+      ],
+      "__sept3_default": [
+        100109,
+        100108,
+        100004,
+        100102,
+        100103,
+        100106,
+        100105,
+        100110,
+        100101,
+        100003
+      ],
+      "__sept3_private": [
+        100109,
+        100108,
+        100004,
+        100102,
+        100103,
+        100106,
+        100105,
+        100110,
+        100101,
+        100003
+      ],
+      "17": [
+        100102,
+        100103
+      ]
+    },
+    "extended_reactions_by_namespace": {
+      "default": [
+        100109,
+        100108,
+        100104,
+        100102,
+        100103,
+        100110,
+        100114,
+        100131,
+        100125,
+        100101,
+        100116,
+        100105,
+        100126,
+        100130,
+        100122,
+        100128,
+        100106,
+        100117,
+        100112,
+        100118,
+        100127,
+        100120,
+        100129,
+        100123,
+        100107,
+        100121,
+        100119,
+        100111,
+        100124
+      ],
+      "private": [
+        100109,
+        100108,
+        100104,
+        100102,
+        100103,
+        100110,
+        100114,
+        100131,
+        100125,
+        100101,
+        100116,
+        100105,
+        100126,
+        100130,
+        100122,
+        100128,
+        100106,
+        100117,
+        100112,
+        100118,
+        100127,
+        100120,
+        100129,
+        100123,
+        100107,
+        100121,
+        100119,
+        100111,
+        100124
+      ],
+      "17": [
+        100102,
+        100103
+      ],
+      "22": [
+        100109,
+        100108,
+        100104,
+        100102,
+        100103,
+        100110,
+        100114,
+        100131,
+        100125,
+        100101,
+        100116,
+        100105,
+        100126,
+        100130,
+        100122,
+        100128,
+        100106,
+        100117,
+        100112,
+        100118,
+        100127,
+        100120,
+        100129,
+        100123,
+        100107,
+        100121,
+        100119,
+        100111,
+        100124
+      ],
+      "8": [
+        100109,
+        100108,
+        100104,
+        100102,
+        100103,
+        100110,
+        100114,
+        100131,
+        100125,
+        100101,
+        100116,
+        100105,
+        100126,
+        100130,
+        100122,
+        100128,
+        100106,
+        100117,
+        100112,
+        100118,
+        100127,
+        100120,
+        100129,
+        100123,
+        100107,
+        100121,
+        100111,
+        100124
+      ]
+    }
+  },
+  "picker_note": "Набор пикера приходит из config.json и зависит от namespace чата (private / <ns> / default, суффикс _team для Я.Team). Ключи с префиксом __ (__ny_*, __march8_*, __sept3_*) - сезонные, в дефолтном наборе не активны. Это НЕ ограничение сервера, а только то, что показывает UI.",
+  "reactions": {
+    "10084": {
+      "name": "heart",
+      "emoji": "❤",
+      "set": "legacy",
+      "evidence": "CODEPOINT_SELF_EVIDENT",
+      "codepoint": "U+2764"
+    },
+    "100001": {
+      "name": "mask-ny",
+      "emoji": "😷🎅",
+      "set": "seasonal",
+      "evidence": "ASSET"
+    },
+    "100002": {
+      "name": "goose-ny",
+      "emoji": "🪿🎅",
+      "set": "seasonal",
+      "evidence": "ASSET"
+    },
+    "100003": {
+      "name": "309",
+      "emoji": "📆",
+      "set": "seasonal",
+      "evidence": "ASSET"
+    },
+    "100004": {
+      "name": "rowan",
+      "emoji": "🍂🔥",
+      "set": "seasonal",
+      "evidence": "ASSET"
+    },
+    "100005": {
+      "name": "review-2",
+      "emoji": "✚✚",
+      "set": "seasonal",
+      "evidence": "ASSET"
+    },
+    "100006": {
+      "name": "review-3",
+      "emoji": "✚✚✚",
+      "set": "seasonal",
+      "evidence": "ASSET"
+    },
+    "100007": {
+      "name": "review-4",
+      "emoji": "✚✚✚✚",
+      "set": "seasonal",
+      "evidence": "ASSET"
+    },
+    "100008": {
+      "name": "like-ny",
+      "emoji": "👍",
+      "set": "seasonal",
+      "evidence": "ASSET"
+    },
+    "100009": {
+      "name": "dislike-ny",
+      "emoji": "👎",
+      "set": "seasonal",
+      "evidence": "ASSET"
+    },
+    "100101": {
+      "name": "check-ext",
+      "emoji": "✅",
+      "set": "ext",
+      "evidence": "LIVE_PICKER_VISUAL"
+    },
+    "100102": {
+      "name": "like-ext",
+      "emoji": "👍",
+      "set": "ext",
+      "evidence": "LIVE_CLICK"
+    },
+    "100103": {
+      "name": "dislike-ext",
+      "emoji": "👎",
+      "set": "ext",
+      "evidence": "LIVE_CLICK"
+    },
+    "100104": {
+      "name": "flame-ext",
+      "emoji": "🔥",
+      "set": "ext",
+      "evidence": "LIVE_CLICK"
+    },
+    "100105": {
+      "name": "crying-ext",
+      "emoji": "😭",
+      "set": "ext",
+      "evidence": "LIVE_PICKER_VISUAL"
+    },
+    "100106": {
+      "name": "surprised-ext",
+      "emoji": "😲",
+      "set": "ext",
+      "evidence": "LIVE_PICKER_VISUAL"
+    },
+    "100107": {
+      "name": "goose-ext",
+      "emoji": "🪿",
+      "set": "ext",
+      "evidence": "LIVE_PICKER_VISUAL"
+    },
+    "100108": {
+      "name": "laugh-ext",
+      "emoji": "😄",
+      "set": "ext",
+      "evidence": "LIVE_PICKER_VISUAL"
+    },
+    "100109": {
+      "name": "heart-ext",
+      "emoji": "❤️",
+      "set": "ext",
+      "evidence": "LIVE_CLICK"
+    },
+    "100110": {
+      "name": "eyes-ext",
+      "emoji": "👀",
+      "set": "ext",
+      "evidence": "LIVE_CLICK"
+    },
+    "100111": {
+      "name": "plus-ext",
+      "emoji": "➕",
+      "set": "ext",
+      "evidence": "LIVE_PICKER_VISUAL"
+    },
+    "100112": {
+      "name": "terrible-ext",
+      "emoji": "😨",
+      "set": "ext",
+      "evidence": "LIVE_PICKER_VISUAL"
+    },
+    "100113": {
+      "name": "4plus-ext",
+      "emoji": "✚✚✚✚",
+      "set": "ext",
+      "evidence": "ASSET"
+    },
+    "100114": {
+      "name": "ok-ext",
+      "emoji": "👌",
+      "set": "ext",
+      "evidence": "LIVE_PICKER_VISUAL"
+    },
+    "100115": {
+      "name": "mindblowing-ext",
+      "emoji": "🤯",
+      "set": "ext",
+      "evidence": "ASSET"
+    },
+    "100116": {
+      "name": "heartbroke-ext",
+      "emoji": "💔",
+      "set": "ext",
+      "evidence": "LIVE_PICKER_VISUAL"
+    },
+    "100117": {
+      "name": "salute-ext",
+      "emoji": "🫡",
+      "set": "ext",
+      "evidence": "LIVE_PICKER_VISUAL"
+    },
+    "100118": {
+      "name": "puke-ext",
+      "emoji": "🤮",
+      "set": "ext",
+      "evidence": "LIVE_PICKER_VISUAL"
+    },
+    "100119": {
+      "name": "poo-ext",
+      "emoji": "💩",
+      "set": "ext",
+      "evidence": "LIVE_PICKER_VISUAL"
+    },
+    "100120": {
+      "name": "hand-ext",
+      "emoji": "✋",
+      "set": "ext",
+      "evidence": "LIVE_PICKER_VISUAL"
+    },
+    "100121": {
+      "name": "sigma-ext",
+      "emoji": "🗿",
+      "set": "ext",
+      "evidence": "LIVE_PICKER_VISUAL"
+    },
+    "100122": {
+      "name": "facepalm-ext",
+      "emoji": "🤦",
+      "set": "ext",
+      "evidence": "LIVE_PICKER_VISUAL"
+    },
+    "100123": {
+      "name": "celebration-ext",
+      "emoji": "🎉",
+      "set": "ext",
+      "evidence": "LIVE_PICKER_VISUAL"
+    },
+    "100124": {
+      "name": "minus-ext",
+      "emoji": "➖",
+      "set": "ext",
+      "evidence": "LIVE_PICKER_VISUAL"
+    },
+    "100125": {
+      "name": "inlove-ext",
+      "emoji": "😍",
+      "set": "ext",
+      "evidence": "LIVE_PICKER_VISUAL"
+    },
+    "100126": {
+      "name": "think-ext",
+      "emoji": "🤔",
+      "set": "ext",
+      "evidence": "LIVE_PICKER_VISUAL"
+    },
+    "100127": {
+      "name": "clown-ext",
+      "emoji": "🤡",
+      "set": "ext",
+      "evidence": "LIVE_PICKER_VISUAL"
+    },
+    "100128": {
+      "name": "pokerface-ext",
+      "emoji": "😐",
+      "set": "ext",
+      "evidence": "LIVE_PICKER_VISUAL"
+    },
+    "100129": {
+      "name": "applause-ext",
+      "emoji": "👏",
+      "set": "ext",
+      "evidence": "LIVE_PICKER_VISUAL"
+    },
+    "100130": {
+      "name": "glass-ext",
+      "emoji": "😎",
+      "set": "ext",
+      "evidence": "LIVE_PICKER_VISUAL"
+    },
+    "100131": {
+      "name": "onehundred-ext",
+      "emoji": "💯",
+      "set": "ext",
+      "evidence": "LIVE_CLICK"
+    },
+    "100132": {
+      "name": "like-tulips",
+      "emoji": "👍💐",
+      "set": "ext",
+      "evidence": "ASSET"
+    },
+    "100133": {
+      "name": "dislike-tulips",
+      "emoji": "👎💐",
+      "set": "ext",
+      "evidence": "ASSET"
+    },
+    "127818": {
+      "name": "tangerine",
+      "emoji": "🍊",
+      "set": "legacy",
+      "evidence": "CODEPOINT_SELF_EVIDENT",
+      "codepoint": "U+1F34A"
+    },
+    "128077": {
+      "name": "like",
+      "emoji": "👍",
+      "set": "legacy",
+      "evidence": "CODEPOINT_SELF_EVIDENT",
+      "codepoint": "U+1F44D"
+    },
+    "128078": {
+      "name": "dislike",
+      "emoji": "👎",
+      "set": "legacy",
+      "evidence": "CODEPOINT_SELF_EVIDENT",
+      "codepoint": "U+1F44E"
+    },
+    "128293": {
+      "name": "fire",
+      "emoji": "🔥",
+      "set": "legacy",
+      "evidence": "CODEPOINT_SELF_EVIDENT",
+      "codepoint": "U+1F525"
+    },
+    "128518": {
+      "name": "laugh",
+      "emoji": "😆",
+      "set": "legacy",
+      "evidence": "CODEPOINT_SELF_EVIDENT",
+      "codepoint": "U+1F606"
+    },
+    "128525": {
+      "name": "love",
+      "emoji": "😍",
+      "set": "legacy",
+      "evidence": "CODEPOINT_SELF_EVIDENT",
+      "codepoint": "U+1F60D"
+    },
+    "128557": {
+      "name": "cry",
+      "emoji": "😭",
+      "set": "legacy",
+      "evidence": "CODEPOINT_SELF_EVIDENT",
+      "codepoint": "U+1F62D"
+    },
+    "128562": {
+      "name": "wow",
+      "emoji": "😲",
+      "set": "legacy",
+      "evidence": "CODEPOINT_SELF_EVIDENT",
+      "codepoint": "U+1F632"
+    },
+    "129393": {
+      "name": "boredom",
+      "emoji": "🥱",
+      "set": "legacy",
+      "evidence": "CODEPOINT_SELF_EVIDENT",
+      "codepoint": "U+1F971"
+    }
+  },
+  "composer_emoji_menu": {
+    "what_it_is": "Текстовый композер-пикер (вкладки Emoji/Stickers/Images), привязан к полю ввода, НЕ к сообщению.",
+    "dom": "панель .yamb-emoji: 0 элементов <img>, узлы .yamb-emoji__item несут ЧИСТЫЙ Unicode-символ (innerHTML == '😃').",
+    "source": "чанк 610 emojis.chunk.js, лениво; 9 паков пар [emoji, shortcode], напр. [\"😃\",\":smiley:\"].",
+    "proven_live": "клик по 😃 в панели -> в contenteditable появился литерал '😃'. Реакция НЕ ставится.",
+    "relation_to_reactions": "НИКАКОЙ. Эмодзи уходит символом внутри Text.MessageText (спайк 2: строка возвращается байт-в-байт). Маппинг int не нужен и не применим."
+  },
+  "reactions_picker_is_closed_set": {
+    "expanded_count": 29,
+    "expanded_types_equal_config": true,
+    "text_emoji_nodes": 0,
+    "search_inputs": 0,
+    "proven_live": "развёрнутый пикер (клик по шеврону .yamb-reactions-picker__expand-button) отдал ровно 29 <img>, типы посимвольно совпали с extended_reactions_by_namespace.private и в том же порядке. Ни текстовых эмодзи, ни поля поиска - UI-пути поставить реакцию произвольным эмодзи НЕТ.",
+    "note": "Закрытость набора - свойство UI, а не сервера: сервер по-прежнему съест любой int (999999 -> Status:1)."
+  }
+}

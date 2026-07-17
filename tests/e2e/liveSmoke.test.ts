@@ -26,6 +26,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { CookieAuthProvider } from '../../src/auth/CookieAuthProvider.js';
 import { PlaywrightProfile } from '../../src/auth/PlaywrightProfile.js';
 import { loadConfig } from '../../src/config/loadConfig.js';
+import { loadReactionMap } from '../../src/config/reactionMap.js';
 import type { ToolDeps } from '../../src/mcp/tools/deps.js';
 import { getHistory } from '../../src/mcp/tools/getHistory.js';
 import { listChats } from '../../src/mcp/tools/listChats.js';
@@ -87,7 +88,7 @@ describe.skipIf(!LIVE)('e2e live smoke (YMCP_E2E=1, реальный аккау�
       logger,
     });
     const http = new RegistryHttpClient({ apiUrl: config.protocol.apiUrl, auth, logger });
-    deps = { ws, http, auth, config, logger };
+    deps = { ws, http, auth, config, logger, reactionMap: loadReactionMap() };
   });
 
   afterAll(() => {

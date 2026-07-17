@@ -7,6 +7,7 @@
  * который реально ходит к серверу.
  */
 import type { AuthProvider } from '../../auth/AuthProvider.js';
+import type { ReactionMap } from '../../config/reactionMap.js';
 import type { Config } from '../../config/types.js';
 import type { RegistryHttpClient } from '../../transport/RegistryHttpClient.js';
 import type { MessengerWsClient } from '../../transport/ws/MessengerWsClient.js';
@@ -18,4 +19,6 @@ export interface ToolDeps {
   auth: AuthProvider;
   config: Config;
   logger: Logger;
+  /** Карта реакций (Phase 2): int type -> name/emoji для отрисовки в обогащённой выдаче */
+  reactionMap: ReactionMap;
 }

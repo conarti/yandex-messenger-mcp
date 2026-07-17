@@ -14,7 +14,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && chmod +x dist/index.js",
+    "build": "tsc -p tsconfig.json && cp src/config/reaction-map.json dist/config/reaction-map.json && chmod +x dist/index.js",
     "typecheck": "tsc -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest"

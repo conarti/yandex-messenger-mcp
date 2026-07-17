@@ -4,6 +4,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../../src/config/loadConfig.js';
+import { loadReactionMap } from '../../src/config/reactionMap.js';
 import { createLogger } from '../../src/util/logger.js';
 import type { ToolDeps } from '../../src/mcp/tools/deps.js';
 import { getHistory } from '../../src/mcp/tools/getHistory.js';
@@ -47,6 +48,7 @@ function makeDeps(overrides: { wsRequest?: unknown; httpCall?: unknown } = {}): 
     auth: { getWhoami: async () => ({ uid: '123', guid: MY_GUID }) },
     config,
     logger,
+    reactionMap: loadReactionMap(),
   } as unknown as ToolDeps;
   return { deps, wsRequest, httpCall };
 }
@@ -228,6 +230,46 @@ describe('get_history', () => {
     if (result.status !== 'ok') throw new Error('ожидался ok');
     expect(result.messages[0]?.attachments).toEqual([
       { kind: 'image', file_id: 'doc-1', name: 'p.jpg', size: 10, source: 'mds', width: 1, height: 2 },
+    ]);
+  });
+
+  it('реакции из сиблингов отрисованы через карту; 999999 виден как unknown, выдача не падает, Count сходится', async () => {
+    const withReactions = {
+      ServerMessage: {
+        ClientMessage: { Plain: { ChatId: CHAT_ID, Text: { MessageText: 'с реакциями' } } },
+        ServerMessageInfo: {
+          Timestamp: 1784287503814009,
+          SeqNo: 1,
+          LastEditTimestamp: 0,
+          Deleted: false,
+          From: { Guid: 'bbbbbbbb-5555-6666-7777-888888888888', DisplayName: 'Собеседник' },
+        },
+        /* Reactions - сиблинг уровня ServerMessage (§11.2), включая неизвестный серверу тип */
+        Reactions: [
+          { Type: 100102, Count: 3 },
+          { Type: 999999, Count: 1 },
+        ],
+      },
+    };
+    const { deps } = makeDeps({
+      wsRequest: async () => ({ Chats: [{ ChatId: CHAT_ID, Messages: [withReactions] }] }),
+    });
+
+    const result = await getHistory(deps, { chat: CHAT_ID, limit: 40 });
+
+    if (result.status !== 'ok') throw new Error('ожидался ok');
+    /* Известный тип - с name/emoji из карты; неизвестный - unknown, но не потерян */
+    expect(result.messages[0]?.reactions).toEqual([
+      { type: 100102, name: 'like-ext', emoji: '👍', count: 3 },
+      { type: 999999, name: null, emoji: null, unknown: true, count: 1 },
+    ]);
+    /* Count сходится: сумма показанного = сумме сырого Reactions[].Count */
+    const shown = (result.messages[0]?.reactions ?? []).reduce((sum, r) => sum + (r.count ?? 0), 0);
+    expect(shown).toBe(4);
+    /* Сырой reactions_raw тоже на месте (Phase 1 не сломан) */
+    expect(result.messages[0]?.reactions_raw.items).toEqual([
+      { type: 100102, count: 3 },
+      { type: 999999, count: 1 },
     ]);
   });
 

@@ -4,6 +4,7 @@ import { sweepDownloads } from './attachments/cleanup.js';
 import { CookieAuthProvider } from './auth/CookieAuthProvider.js';
 import { PlaywrightProfile } from './auth/PlaywrightProfile.js';
 import { loadConfig } from './config/loadConfig.js';
+import { loadReactionMap } from './config/reactionMap.js';
 import { createServer } from './server.js';
 import { RegistryHttpClient } from './transport/RegistryHttpClient.js';
 import { MessengerWsClient } from './transport/ws/MessengerWsClient.js';
@@ -57,7 +58,11 @@ async function main(): Promise<void> {
   });
   const http = new RegistryHttpClient({ apiUrl: config.protocol.apiUrl, auth, logger });
 
-  const server = createServer({ config, logger, deps: { ws, http, auth, config, logger } });
+  const server = createServer({
+    config,
+    logger,
+    deps: { ws, http, auth, config, logger, reactionMap: loadReactionMap() },
+  });
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
