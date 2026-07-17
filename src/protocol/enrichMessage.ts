@@ -1,0 +1,357 @@
+/**
+ * Обогащение прочитанного сообщения (Fork D1, §11.2/§9.1).
+ *
+ * ПОЧЕМУ ОТДЕЛЬНАЯ ФУНКЦИЯ, А НЕ ПРАВКА `normalizeMessage`. Выход v1-нормализатора
+ * (`messageShape.ts`) заморожен байт-в-байт: на его форму завязана регрессия v1
+ * (`toEqual` в `messageShape.test.ts`). Обогащение приезжает НОВОЙ функцией поверх
+ * немутируемого `base` и добавляет ТОЛЬКО НОВЫЕ top-level ключи. Так «v1-объект =
+ * структурное подмножество v2-выхода» держится структурно, а не дисциплиной.
+ *
+ * ИСТОЧНИК ДАННЫХ - СИБЛИНГИ. Прочтения, реакции, упоминания, форварды и корень треда
+ * лежат СИБЛИНГАМИ `ClientMessage` на уровне `ServerMessage` (§11.2), а не внутри тела;
+ * `normalizeMessage` их отбрасывает. Поэтому `enrichMessage` получает сырой
+ * `ServerMessage`-уровень отдельным аргументом `ctx.siblings`.
+ *
+ * БЕЗ I/O. Чистая функция от уже полученных данных. Детальная выборка реакций/прочтений
+ * (два вызова `list_reactions` на сообщение) - дело инструмента в Phase 2, не энричера.
+ * Сиблинги `history` обрезаны (§17.12: `ReadsCount:10` при `RecentUserReads` длиной 3),
+ * поэтому здесь они - «что приехало», а не полный список.
+ *
+ * ЛОВУШКА §17.13. Под `MessageDataFilter.DropPayload:true` пропадает и `From`. Отсутствие
+ * автора НЕ значит «сообщение не моё»: `from_me` в этом случае `null` (неизвестно), не `false`.
+ *
+ * ФОРМАТИРОВАНИЕ §17.14. Структурированных entities протокол не даёт: `Text` несёт ровно
+ * `MessageText`, разметку рисует клиент. `text` в `base` уже сырой - тут ничего не меняем.
+ */
+import type { AttachmentRef } from './attachmentRefs.js';
+import { normalizeMessage, type Message, type MessageSender } from './messageShape.js';
+import { asObject, numberOr, stringOr } from '../util/json.js';
+import { microsToIso, parseMicros } from '../util/timestamps.js';
+
+/** Прочтение конкретным пользователем (сиблинг `RecentUserReads`, §11.2) */
+export interface ReadReceipt {
+  guid?: string;
+  name?: string;
+  timestamp?: string;
+  timestamp_mcs?: string;
+}
+
+/**
+ * Прочтения сообщения. Отсутствие сиблингов прочтений = «не отслеживается»
+ * (`tracked:false`), а НЕ ноль: сервер не для всех чатов отдаёт read-state (§17.12).
+ */
+export interface MessageReads {
+  tracked: boolean;
+  count?: number;
+  recent?: ReadReceipt[];
+  /** Метка «увидено собеседником» строкой (мкс), не float */
+  seen_by_partner_mcs?: string;
+}
+
+/** Упоминание. Нет имени для guid - явный `unresolved`, а не молча guid вместо имени (§AC-6) */
+export interface MentionRef {
+  guid: string;
+  name?: string;
+  unresolved?: boolean;
+}
+
+/**
+ * Сырая реакция. `type` - int (id артворка, §17.12), присутствует ВСЕГДА.
+ * Отрисовка в emoji/name по карте приходит в Phase 2 - здесь только сырой тип.
+ */
+export interface RawReaction {
+  type: number;
+  count?: number;
+}
+
+/** Сырая реакция конкретного пользователя (сиблинг `RecentUserReactions`, §11.2) */
+export interface RecentReaction {
+  type: number;
+  guid?: string;
+  name?: string;
+  timestamp?: string;
+  timestamp_mcs?: string;
+}
+
+export interface ReactionsRaw {
+  /** Агрегаты из `Reactions[]` */
+  items: RawReaction[];
+  /** Пофамильные из `RecentUserReactions[]` */
+  recent: RecentReaction[];
+}
+
+/** Признак «есть тред» + корень (`ThreadState`/`ThreadParentMessage`, §9.1) */
+export interface ThreadInfo {
+  has_thread: boolean;
+  /** Корень треда, нормализованный тем же v1-нормализатором */
+  root?: Message;
+}
+
+/** Оригинал пересылки (сиблинг `ForwardedMessages`, §11.2). НОВЫЙ ключ, НЕ `context.refs[]` */
+export interface ForwardedOriginal {
+  source_author: MessageSender;
+  source_chat?: string;
+  source_date: string;
+  source_date_mcs: string;
+  source_text?: string;
+  attachments: AttachmentRef[];
+}
+
+/**
+ * Выход обогащения: `base` v1 плюс НОВЫЕ top-level ключи. `extends Message` гарантирует,
+ * что все v1-поля на месте и типобезопасно передаются наружу.
+ */
+export interface EnrichedMessage extends Message {
+  /** Автор == я. `null`, если `From` срезан `DropPayload` (§17.13) - не выдаём за `false` */
+  from_me: boolean | null;
+  reads: MessageReads;
+  mentions: MentionRef[];
+  reactions_raw: ReactionsRaw;
+  thread: ThreadInfo;
+  forwarded: ForwardedOriginal[];
+}
+
+export interface EnrichContext {
+  myGuid: string;
+  /** Зарезервировано для Phase 2 (маппинг реакций по карте); в Phase 1 не используется */
+  reactionMap?: unknown;
+  /** Сырой `ServerMessage`-уровень: то, что `normalizeMessage` отбросил */
+  siblings: unknown;
+}
+
+/** `UserInfo` (§11.2) -> отправитель. Без непустого guid - бесполезен */
+function userRef(raw: unknown): MessageSender | undefined {
+  const info = asObject(raw);
+  if (info === undefined) {
+    return undefined;
+  }
+  const guid = stringOr(info['Guid']);
+  if (guid === undefined) {
+    return undefined;
+  }
+  const name = stringOr(info['DisplayName']);
+  return { guid, ...(name !== undefined ? { name } : {}) };
+}
+
+/** Метка (мкс) -> `{timestamp, timestamp_mcs}`; `0`/битую отдаёт как отсутствие, а не роняет */
+function microsMark(raw: unknown): { timestamp: string; timestamp_mcs: string } | undefined {
+  if (raw === undefined || raw === null || raw === 0) {
+    return undefined;
+  }
+  try {
+    const micros = parseMicros(raw);
+    return { timestamp: microsToIso(micros), timestamp_mcs: micros.toString() };
+  } catch {
+    return undefined;
+  }
+}
+
+function userReceipt(user: MessageSender | undefined): { guid?: string; name?: string } {
+  if (user === undefined) {
+    return {};
+  }
+  return { guid: user.guid, ...(user.name !== undefined ? { name: user.name } : {}) };
+}
+
+/** Тело `Plain`/`Ephemeral` из сырого `ServerMessage` (нужно ради `MentionedUserIds`) */
+function resolvePlain(siblings: Record<string, unknown>): Record<string, unknown> | undefined {
+  const clientMessage = asObject(siblings['ClientMessage']);
+  if (clientMessage === undefined) {
+    return undefined;
+  }
+  return asObject(clientMessage['Plain']) ?? asObject(clientMessage['Ephemeral']);
+}
+
+function buildReads(siblings: Record<string, unknown>): MessageReads {
+  /* Ключ ПРИСУТСТВУЕТ = отслеживается, даже если `ReadsCount:0`. Отсутствие всех = не отслеживается */
+  const tracked =
+    'ReadsCount' in siblings || 'RecentUserReads' in siblings || 'SeenByPartnerMcs' in siblings;
+  if (!tracked) {
+    return { tracked: false };
+  }
+
+  const count = numberOr(siblings['ReadsCount']);
+  const rawRecent = Array.isArray(siblings['RecentUserReads']) ? siblings['RecentUserReads'] : [];
+  const recent: ReadReceipt[] = [];
+  for (const entry of rawRecent) {
+    const obj = asObject(entry);
+    if (obj === undefined) {
+      continue;
+    }
+    const user = userRef(obj['UserInfo']);
+    const mark = microsMark(obj['Timestamp']);
+    if (user === undefined && mark === undefined) {
+      continue;
+    }
+    recent.push({ ...userReceipt(user), ...(mark !== undefined ? mark : {}) });
+  }
+
+  const seenMcs = numberOr(siblings['SeenByPartnerMcs']);
+  return {
+    tracked: true,
+    ...(count !== undefined ? { count } : {}),
+    ...(recent.length > 0 ? { recent } : {}),
+    ...(seenMcs !== undefined && seenMcs > 0 ? { seen_by_partner_mcs: seenMcs.toString() } : {}),
+  };
+}
+
+function buildMentions(siblings: Record<string, unknown>): MentionRef[] {
+  const rawUsers = Array.isArray(siblings['MentionedUsers']) ? siblings['MentionedUsers'] : [];
+  const nameByGuid = new Map<string, string>();
+  for (const raw of rawUsers) {
+    const user = userRef(raw);
+    if (user?.name !== undefined) {
+      nameByGuid.set(user.guid, user.name);
+    }
+  }
+
+  /* Порядок и состав упоминаний - из `MentionedUserIds` тела; имена подставляем из сиблинга */
+  const plain = resolvePlain(siblings);
+  const rawIds = Array.isArray(plain?.['MentionedUserIds']) ? plain['MentionedUserIds'] : [];
+  const guids: string[] = [];
+  for (const raw of rawIds) {
+    const guid = stringOr(raw);
+    if (guid !== undefined) {
+      guids.push(guid);
+    }
+  }
+  /* Тело без `MentionedUserIds`, но сиблинг с именами - берём состав из сиблинга */
+  if (guids.length === 0) {
+    for (const raw of rawUsers) {
+      const user = userRef(raw);
+      if (user !== undefined) {
+        guids.push(user.guid);
+      }
+    }
+  }
+
+  const mentions: MentionRef[] = [];
+  const seen = new Set<string>();
+  for (const guid of guids) {
+    if (seen.has(guid)) {
+      continue;
+    }
+    seen.add(guid);
+    const name = nameByGuid.get(guid);
+    if (name !== undefined && name.length > 0) {
+      mentions.push({ guid, name });
+    } else {
+      mentions.push({ guid, unresolved: true });
+    }
+  }
+  return mentions;
+}
+
+function buildReactionsRaw(siblings: Record<string, unknown>): ReactionsRaw {
+  const rawItems = Array.isArray(siblings['Reactions']) ? siblings['Reactions'] : [];
+  const items: RawReaction[] = [];
+  for (const raw of rawItems) {
+    const obj = asObject(raw);
+    if (obj === undefined) {
+      continue;
+    }
+    /* Тип - int (§17.12). Без числового типа реакция неадресуема - не тащим мусор */
+    const type = numberOr(obj['Type']);
+    if (type === undefined) {
+      continue;
+    }
+    const count = numberOr(obj['Count']);
+    items.push({ type, ...(count !== undefined ? { count } : {}) });
+  }
+
+  const rawRecent = Array.isArray(siblings['RecentUserReactions']) ? siblings['RecentUserReactions'] : [];
+  const recent: RecentReaction[] = [];
+  for (const raw of rawRecent) {
+    const obj = asObject(raw);
+    if (obj === undefined) {
+      continue;
+    }
+    const type = numberOr(obj['Type']);
+    if (type === undefined) {
+      continue;
+    }
+    const user = userRef(obj['UserInfo']);
+    const mark = microsMark(obj['Timestamp']);
+    recent.push({ type, ...userReceipt(user), ...(mark !== undefined ? mark : {}) });
+  }
+
+  return { items, recent };
+}
+
+function buildThread(siblings: Record<string, unknown>): ThreadInfo {
+  const info = asObject(siblings['ServerMessageInfo']);
+  const threadState = asObject(info?.['ThreadState']);
+  const lastSeqNo = numberOr(threadState?.['LastSeqNo']) ?? 0;
+
+  const parentRaw = siblings['ThreadParentMessage'];
+  /* Корень нормализуем тем же v1-нормализатором: у него та же форма ServerMessage */
+  const root = normalizeMessage(parentRaw) ?? normalizeMessage(asObject(parentRaw)?.['ServerMessage']);
+  const hasParent = asObject(parentRaw) !== undefined;
+
+  return {
+    has_thread: lastSeqNo > 0 || hasParent,
+    ...(root !== undefined ? { root } : {}),
+  };
+}
+
+function buildForwarded(siblings: Record<string, unknown>): ForwardedOriginal[] {
+  const rawList = Array.isArray(siblings['ForwardedMessages']) ? siblings['ForwardedMessages'] : [];
+  const forwarded: ForwardedOriginal[] = [];
+  for (const raw of rawList) {
+    /* Оригинал - тот же ServerMessage: нормализуем его v1-логикой, не переписывая заново */
+    const original = normalizeMessage(raw) ?? normalizeMessage(asObject(raw)?.['ServerMessage']);
+    if (original === undefined) {
+      continue;
+    }
+    forwarded.push({
+      source_author: original.from,
+      ...(original.chat_id !== undefined ? { source_chat: original.chat_id } : {}),
+      source_date: original.timestamp,
+      source_date_mcs: original.timestamp_mcs,
+      ...(original.text !== undefined ? { source_text: original.text } : {}),
+      attachments: original.attachments,
+    });
+  }
+  return forwarded;
+}
+
+/**
+ * `base` (немутируемый выход `normalizeMessage`) + НОВЫЕ top-level ключи из сиблингов.
+ * `base` не мутируется: все его поля переносятся спредом, новые ключи не пересекаются с v1.
+ */
+export function enrichMessage(base: Message, ctx: EnrichContext): EnrichedMessage {
+  const siblings = asObject(ctx.siblings) ?? {};
+  const fromGuid = base.from.guid;
+
+  return {
+    ...base,
+    /* Пустой guid = `From` срезан (§17.13) -> авторство неизвестно, а не «не моё» */
+    from_me: fromGuid.length === 0 ? null : fromGuid === ctx.myGuid,
+    reads: buildReads(siblings),
+    mentions: buildMentions(siblings),
+    reactions_raw: buildReactionsRaw(siblings),
+    thread: buildThread(siblings),
+    forwarded: buildForwarded(siblings),
+  };
+}
+
+/**
+ * Разворачивает `Messages[]` history-ответа: нормализует v1-логикой и обогащает,
+ * прокидывая сырой `ServerMessage` каждого элемента как сиблинги. Неадресуемые
+ * элементы отбрасываются - как в `normalizeMessages`.
+ */
+export function enrichMessages(rawMessages: unknown, ctx: Omit<EnrichContext, 'siblings'>): EnrichedMessage[] {
+  if (!Array.isArray(rawMessages)) {
+    return [];
+  }
+  const messages: EnrichedMessage[] = [];
+  for (const raw of rawMessages) {
+    const serverMessage = asObject(raw)?.['ServerMessage'];
+    const base = normalizeMessage(serverMessage);
+    if (base === undefined) {
+      continue;
+    }
+    messages.push(enrichMessage(base, { ...ctx, siblings: serverMessage }));
+  }
+  return messages;
+}

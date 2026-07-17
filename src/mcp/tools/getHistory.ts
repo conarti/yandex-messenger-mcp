@@ -13,8 +13,8 @@
  * Вложения отдаются РЕФАМИ. Ничего не качается - это делает download_attachment (Phase 6).
  */
 import { resolveChat, type ChatCandidate } from '../../chat/resolveChat.js';
+import { enrichMessages, type EnrichedMessage } from '../../protocol/enrichMessage.js';
 import { buildHistoryParams, findChatEntry, type HistoryResponse } from '../../protocol/history.js';
-import { normalizeMessages, type Message } from '../../protocol/messageShape.js';
 import { parseMicros } from '../../util/timestamps.js';
 import type { ToolDeps } from './deps.js';
 
@@ -30,7 +30,7 @@ export type GetHistoryResult =
   | {
       status: 'ok';
       chat_id: string;
-      messages: Message[];
+      messages: EnrichedMessage[];
       /** Курсор следующей страницы; отсутствует, когда страница пуста */
       next_before?: string;
       /**
@@ -79,7 +79,9 @@ export async function getHistory(deps: ToolDeps, input: GetHistoryInput): Promis
    * остановил бы пагинацию и МОЛЧА потерял бы всю историю старше этой страницы.
    */
   const rawCount = Array.isArray(entry?.Messages) ? entry.Messages.length : 0;
-  const messages = normalizeMessages(entry?.Messages);
+  /* Обогащение аддитивно поверх немутируемого v1-нормализатора (Fork D1): к каждому сообщению
+   * добавляются НОВЫЕ ключи (reads/mentions/reactions_raw/thread/forwarded/from_me), v1-форма цела */
+  const messages = enrichMessages(entry?.Messages, { myGuid: guid });
 
   /* Сервер отдаёт страницу от старых к новым, поэтому курсор - метка первого элемента */
   const oldest = messages[0];
