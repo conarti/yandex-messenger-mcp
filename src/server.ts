@@ -27,7 +27,7 @@ export const TOOL_NAMES = [
 export interface CreateServerOptions {
   config: Config;
   logger: Logger;
-  /** Транспорты и auth. Без них read-инструменты не работают (send/download - ещё заглушки) */
+  /** Транспорты и auth: без них не работает ни один из пяти инструментов */
   deps: ToolDeps;
 }
 
@@ -37,8 +37,11 @@ function jsonResult(payload: unknown): CallToolResult {
 }
 
 /**
- * Ошибка инструмента -> MCP-ошибка. Полный маппинг трёх слоёв протокола - Phase 7;
- * здесь ошибка лишь не теряется и не выглядит как пустая выдача.
+ * Ошибка инструмента -> MCP-ошибка.
+ *
+ * Маппинг трёх слоёв протокола живёт в `protocol/errors.ts` и приезжает сюда уже готовым
+ * текстом `MessengerError` - с тегом слоя и именем кода. Задача этой функции ровно одна:
+ * не потерять ошибку и не выдать её за пустую выдачу.
  */
 function errorResult(tool: string, error: unknown, logger: Logger): CallToolResult {
   const message = error instanceof Error ? error.message : String(error);
