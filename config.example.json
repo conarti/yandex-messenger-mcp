@@ -1,0 +1,27 @@
+{
+  "$comment": "Пример ~/.config/yandex-messenger-mcp/config.json. Файл целиком опционален: без него используются дефолты. Любая секция и любое поле переопределяются точечно.",
+  "paths": {
+    "profileDir": "profile",
+    "downloadsDir": "downloads"
+  },
+  "downloads": {
+    "ttlDays": 7
+  },
+  "limits": {
+    "listChatsDefaultLimit": 50,
+    "searchDefaultLimit": 50
+  },
+  "protocol": {
+    "apiUrl": "https://yandex.ru/messenger/api/registry/api/",
+    "csrfTokenUrl": "https://yandex.ru/messenger/api/registry/csrf-token/",
+    "xivaUrl": "wss://push.yandex.ru/v2/subscribe/websocket",
+    "xivaServiceName": "messenger-prod",
+    "serviceId": 27,
+    "apiVersion": 5,
+    "client": 1000,
+    "filePrivateHost": "files.messenger.yandex.ru",
+    "filePublicHost": "files.messenger.yandex.net",
+    "yapicFileHost": "avatars.mds.yandex.net",
+    "workspaceId": "main"
+  }
+}
