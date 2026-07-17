@@ -19,8 +19,17 @@
  * НЕОДНОЗНАЧНОСТЬ НЕ РАЗРЕШАЕТСЯ ГАДАНИЕМ (см. resolveChat): несколько кандидатов ->
  * наружу уходят кандидаты, и ни один push при этом не отправляется.
  */
-import { createHash } from 'node:crypto';
 import { resolveChat, type ChatCandidate } from '../../chat/resolveChat.js';
+import {
+  ConfirmRejectedError,
+  encodeToken,
+  fingerprint,
+  recallResult,
+  rememberResult,
+  resetConfirmMemory,
+  verifyConfirmToken,
+  type DraftToken,
+} from '../confirm.js';
 import {
   buildPlainTextClientMessage,
   buildPushParams,
@@ -66,74 +75,12 @@ export type SendMessageResult =
   | { status: 'ambiguous_chat'; candidates: ChatCandidate[] }
   | { status: 'chat_not_found'; query: string };
 
-/** Confirm отвергнут. Всегда громко: тихий отказ на пути отправки неотличим от успеха */
-export class ConfirmRejectedError extends Error {
-  constructor(
-    readonly reason: 'token_missing' | 'token_malformed' | 'chat_mismatch' | 'text_mismatch',
-    detail: string,
-  ) {
-    super(`send_message: confirm отвергнут (${reason}): ${detail}. Сообщение НЕ отправлено`);
-    this.name = 'ConfirmRejectedError';
-  }
-}
-
-/** Начинка confirm-токена. Текста тут нет - только его хэш: токен ходит через чужие руки */
-interface DraftToken {
-  chat_id: string;
-  text_hash: string;
-  payload_id: string;
-}
-
 /**
- * Токен намеренно НЕ подписан: подделка ничего не даёт. Чат из токена сверяется с
- * ЗАНОВО резолвнутым, текст - с заново посчитанным хэшем, а отправка идёт в проверенный
- * чат. Токен - это память о драфте, а не полномочие.
+ * Экспортируется для тестов: чистит общую память confirm-модуля. Имя сохранено ради v1-тестов
+ * (send-путь исторически звал сброс так); под капотом - общий `resetConfirmMemory`.
  */
-function encodeToken(draft: DraftToken): string {
-  return Buffer.from(JSON.stringify(draft), 'utf8').toString('base64url');
-}
-
-function decodeToken(raw: string): DraftToken | undefined {
-  try {
-    const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as Partial<DraftToken>;
-    if (
-      typeof parsed.chat_id !== 'string' ||
-      typeof parsed.text_hash !== 'string' ||
-      typeof parsed.payload_id !== 'string'
-    ) {
-      return undefined;
-    }
-    return { chat_id: parsed.chat_id, text_hash: parsed.text_hash, payload_id: parsed.payload_id };
-  } catch {
-    return undefined;
-  }
-}
-
-function hashText(text: string): string {
-  return createHash('sha256').update(text, 'utf8').digest('hex');
-}
-
-/**
- * Израсходованные токены -> их результат. Ограничена сверху: это защита от повтора в
- * пределах сессии, а не журнал. Вытеснение старого токена не ломает идемпотентность -
- * его повтор упрётся в серверную дедупликацию по `PayloadId`.
- */
-const MAX_REMEMBERED_SENDS = 100;
-const sentByToken = new Map<string, SendMessageSent>();
-
-function rememberSend(token: string, result: SendMessageSent): void {
-  sentByToken.set(token, result);
-  for (const oldest of sentByToken.keys()) {
-    if (sentByToken.size <= MAX_REMEMBERED_SENDS) {
-      break;
-    }
-    sentByToken.delete(oldest);
-  }
-}
-
-/** Экспортируется для тестов: модульное состояние не должно течь между кейсами */
 export function resetSentTokens(): void {
-  sentByToken.clear();
+  resetConfirmMemory();
 }
 
 export async function sendMessage(deps: ToolDeps, input: SendMessageInput): Promise<SendMessageResult> {
@@ -153,9 +100,11 @@ export async function sendMessage(deps: ToolDeps, input: SendMessageInput): Prom
   }
 
   if (input.confirm !== true) {
+    /* Отпечаток send-пути = хэш текста, домен-сепарированный op='send' (см. confirm.ts) */
     const draft: DraftToken = {
+      op: 'send',
       chat_id: resolved.chat_id,
-      text_hash: hashText(input.text),
+      fingerprint: fingerprint('send', input.text),
       payload_id: createPayloadId(),
     };
     deps.logger.info('send_message: подготовлен draft, ничего не отправлено', { via: resolved.via });
@@ -171,23 +120,22 @@ export async function sendMessage(deps: ToolDeps, input: SendMessageInput): Prom
     };
   }
 
-  const token = input.confirm_token;
-  if (token === undefined || token.length === 0) {
-    throw new ConfirmRejectedError('token_missing', 'confirm:true требует confirm_token из шага draft');
-  }
-  const draft = decodeToken(token);
-  if (draft === undefined) {
-    throw new ConfirmRejectedError('token_malformed', 'confirm_token не разобран');
-  }
-  if (draft.chat_id !== resolved.chat_id) {
-    /* Ни один из двух чатов не «правильнее» - расхождение значит, что подтверждали не это */
-    throw new ConfirmRejectedError('chat_mismatch', 'запрос chat резолвится в другой чат, чем на шаге draft');
-  }
-  if (draft.text_hash !== hashText(input.text)) {
-    throw new ConfirmRejectedError('text_mismatch', 'текст отличается от подтверждённого на шаге draft');
+  /* Пустая строка вместо undefined: verifyConfirmToken отвергнет её как token_missing */
+  const token = input.confirm_token ?? '';
+  const draft = verifyConfirmToken({
+    op: 'send',
+    token,
+    chatId: resolved.chat_id,
+    fingerprint: fingerprint('send', input.text),
+    /* Историческое имя причины send-пути (v1-тесты ждут text_mismatch, не fingerprint_mismatch) */
+    fingerprintMismatchReason: 'text_mismatch',
+  });
+  if (draft.payload_id === undefined) {
+    /* send-токен обязан нести payload_id (ключ серверной дедупликации); его отсутствие = битый токен */
+    throw new ConfirmRejectedError('token_malformed', 'send-токен без payload_id');
   }
 
-  const remembered = sentByToken.get(token);
+  const remembered = recallResult<SendMessageSent>(token);
   if (remembered !== undefined) {
     deps.logger.warn('send_message: повторный confirm тем же токеном, второй push не отправлен');
     return remembered;
@@ -221,7 +169,7 @@ export async function sendMessage(deps: ToolDeps, input: SendMessageInput): Prom
     ...(outcome.message_info !== undefined ? { message_info: outcome.message_info } : {}),
     ...(outcome.rate_limit !== undefined ? { rate_limit: outcome.rate_limit } : {}),
   };
-  rememberSend(token, result);
+  rememberResult(token, result);
   deps.logger.info('send_message: отправлено', { commit: outcome.status_name, duplicate: outcome.duplicate });
   return result;
 }

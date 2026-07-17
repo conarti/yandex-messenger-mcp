@@ -11,9 +11,12 @@ import { getMessage } from './mcp/tools/getMessage.js';
 import { getMessageContext, DEFAULT_CONTEXT_WINDOW } from './mcp/tools/getMessageContext.js';
 import { getThread, DEFAULT_THREAD_LIMIT } from './mcp/tools/getThread.js';
 import { listChats } from './mcp/tools/listChats.js';
+import { markRead } from './mcp/tools/markRead.js';
+import { pinMessage } from './mcp/tools/pinMessage.js';
 import { joinThread, leaveThread } from './protocol/threads.js';
 import { search } from './mcp/tools/search.js';
 import { sendMessage } from './mcp/tools/sendMessage.js';
+import { setReaction } from './mcp/tools/setReaction.js';
 import type { Logger } from './util/logger.js';
 
 export const SERVER_NAME = 'yandex-messenger-mcp';
@@ -28,6 +31,9 @@ export const TOOL_NAMES = [
   'get_thread',
   'search',
   'send_message',
+  'set_reaction',
+  'mark_read',
+  'pin_message',
   'download_attachment',
   'join_to_thread',
   'leave_thread',
@@ -328,6 +334,100 @@ export function createServer(options: CreateServerOptions): McpServer {
         return jsonResult(await sendMessage(deps, args));
       } catch (error) {
         return errorResult('send_message', error, logger);
+      }
+    },
+  );
+
+  server.registerTool(
+    'set_reaction',
+    {
+      title: 'Set or remove reaction',
+      description:
+        'Ставит или снимает реакцию на сообщение ОДНИМ вызовом, без confirm (реверсибельно). ' +
+        'type - целочисленный id реакции (артворк, НЕ emoji) из поля reactions прочитанного сообщения. ' +
+        'Тип валидируется по карте ДО отправки: неизвестный отвергается на входе и на провод не уходит. ' +
+        'remove:true снимает ранее поставленную реакцию тем же инструментом.',
+      inputSchema: {
+        chat: z.string().min(1).describe('ChatId либо поисковый запрос для резолва чата'),
+        message_id: z
+          .string()
+          .regex(/^\d+$/)
+          .describe('Timestamp целевого сообщения в микросекундах (строка)'),
+        type: z.int().describe('Целочисленный id реакции (артворк) из reactions сообщения; НЕ emoji'),
+        remove: z
+          .boolean()
+          .optional()
+          .describe('true - снять реакцию (Action:REMOVE); по умолчанию поставить'),
+      },
+      /* Реверсибельно (Action:REMOVE откатывает тем же вызовом) -> destructive:false, confirm не нужен (§Round 7) */
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    },
+    async (args) => {
+      try {
+        return jsonResult(await setReaction(deps, args));
+      } catch (error) {
+        return errorResult('set_reaction', error, logger);
+      }
+    },
+  );
+
+  server.registerTool(
+    'mark_read',
+    {
+      title: 'Mark chat read',
+      description:
+        'Отмечает чат прочитанным ОДНИМ вызовом, без confirm (безобидно). Без message_id отмечает ' +
+        'прочитанным до самого свежего сообщения (тянет последнюю страницу истории). ' +
+        'ВНИМАНИЕ: форма маркера (SeenMarker) доко-выведена и живьём ещё не подтверждена - см. form_status в выдаче.',
+      inputSchema: {
+        chat: z.string().min(1).describe('ChatId либо поисковый запрос для резолва чата'),
+        message_id: z
+          .string()
+          .regex(/^\d+$/)
+          .optional()
+          .describe('Timestamp (мкс), до которого включительно отметить прочитанным; без него - до самого свежего'),
+        seqno: z
+          .int()
+          .min(0)
+          .optional()
+          .describe('SeqNo той же границы (необязателен)'),
+      },
+      /* Безобидно, ничего не создаёт/разрушает -> destructive:false, идемпотентно (повтор безопасен), без confirm */
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    async (args) => {
+      try {
+        return jsonResult(await markRead(deps, args));
+      } catch (error) {
+        return errorResult('mark_read', error, logger);
+      }
+    },
+  );
+
+  server.registerTool(
+    'pin_message',
+    {
+      title: 'Pin or unpin message',
+      description:
+        'Закрепляет или открепляет сообщение ОДНИМ вызовом, без confirm (легко откатить). ' +
+        'С message_id закрепляет это сообщение; без message_id открепляет. ' +
+        'ВНИМАНИЕ: семантика Pin.Timestamp доко-выведена и живьём ещё не подтверждена - см. form_status в выдаче.',
+      inputSchema: {
+        chat: z.string().min(1).describe('ChatId либо поисковый запрос для резолва чата'),
+        message_id: z
+          .string()
+          .regex(/^\d+$/)
+          .optional()
+          .describe('Timestamp (мкс) закрепляемого сообщения; без него - открепить'),
+      },
+      /* Легко снять, ничего не разрушает -> destructive:false, без confirm (§Round 7) */
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    },
+    async (args) => {
+      try {
+        return jsonResult(await pinMessage(deps, args));
+      } catch (error) {
+        return errorResult('pin_message', error, logger);
       }
     },
   );
