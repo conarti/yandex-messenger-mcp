@@ -1,17 +1,17 @@
 /**
- * `vote_in_poll` - голос в опросе. EXPERIMENTAL: форма `Vote` (§9.3/§11.4) ДОКО-ВЫВЕДЕНА и
- * живьём НЕ проверена (голос в self-чате недостижим - создание опроса Non-Goal). Поэтому
- * выдача И draft, И confirm несёт `form_status: experimental_unverified` - предупреждение стоит
- * в точке необратимого действия, а не только в README. AC-29 НЕ засчитывается, пока живой
- * `myChoices` не подтвердит голос (условный долг).
+ * `vote_in_poll` - голос в опросе. Форма `Vote` (§9.3/§11.4) подтверждена живьём (2026-07-17):
+ * `commit_status:1 FULLY_COMMITTED`, повторное чтение показало смену `my_choices` с `[0]` на
+ * `[1]` после повторной отправки. Голос ПУБЛИЧЕН и МЕНЯЕМЫЙ: `choices` - это ПОЛНЫЙ набор
+ * выбора, повторная отправка ЗАМЕНЯЕТ прежний (несколько вариантов - все индексы в одном
+ * `Choices`).
  *
- * ПОЧЕМУ CONFIRM. Механики снятия/смены голоса в протоколе не обнаружено - голос необратим,
- * поэтому он двухшаговый (draft->confirm), как send/delete/edit. Если живой прогон найдёт
- * снятие/смену - основание для confirm отпадает и он пересматривается.
+ * ПОЧЕМУ CONFIRM. Confirm сохранён, потому что сам факт голоса необратим: `voted_count` растёт,
+ * а в не-анонимном опросе голосующий попадает в список голосовавших. Отменить голос до нуля
+ * протоколом не подтверждено - это единственный оставшийся мелкий вопрос.
  *
  * ШАГ 1 (по умолчанию): резолв чата -> confirm-токен с выбранными вариантами. В сокет НЕ уходит
  * ничего. ШАГ 2 (`confirm:true` + токен): ре-верификация чата и выбора -> `Vote{ChatId, Timestamp,
- * Choices, Results}` полным конвертом.
+ * Action:0, Choices}` полным конвертом (форма подтверждена живьём, §11.4, БЕЗ `Results`).
  *
  * ИДЕМПОТЕНТНОСТЬ - TARGET-ПУТЬ (без `payload_id`, серверный `DUPLICATE(8)` НЕ обещается): защита
  * от повтора в пределах сессии - локальная память `recallResult`.
@@ -21,14 +21,14 @@ import { encodeToken, fingerprint, recallResult, rememberResult, verifyConfirmTo
 import { buildVoteMutation, pushMutation } from '../../protocol/mutations.js';
 import type { ToolDeps } from './deps.js';
 
-/** Маркер непроверенной формы: голос строится на доко-выведенном `Vote`, живьём не наблюдался */
-export const VOTE_FORM_STATUS = 'experimental_unverified';
+/** Маркер подтверждённой формы: голос `Vote` (Action:0, Choices) подтверждён живьём (2026-07-17) */
+export const VOTE_FORM_STATUS = 'verified';
 
 /** `| undefined` в полях - осознанно: под exactOptionalPropertyTypes zod отдаёт именно такой тип */
 export interface VoteInPollInput {
   chat: string;
   message_id: string;
-  /** Выбранные варианты. Единица (индекс/id) ДОКО-ВЫВЕДЕНА (§11.4) */
+  /** Выбранные варианты: 0-based индексы в Poll.Answers[] (§11.4). ПОЛНЫЙ набор - повторная отправка заменяет */
   choices: number[];
   confirm?: boolean | undefined;
   confirm_token?: string | undefined;
@@ -40,7 +40,7 @@ export interface VoteInPollDraft {
   message_id: string;
   choices: number[];
   confirm_token: string;
-  /** Форма голоса доко-выведена и живьём не проверена: предупреждение в точке действия */
+  /** Форма голоса подтверждена живьём (2026-07-17): маркер в точке действия для прозрачности */
   form_status: typeof VOTE_FORM_STATUS;
   next_step: string;
 }
@@ -52,7 +52,7 @@ export interface VoteInPollVoted {
   choices: number[];
   commit_status: number;
   commit_status_name: string;
-  /** Форма голоса доко-выведена: AC-29 не засчитан без живого myChoices (условный долг) */
+  /** Форма голоса подтверждена живьём (2026-07-17, FULLY_COMMITTED); AC-29 закрыт */
   form_status: typeof VOTE_FORM_STATUS;
 }
 
@@ -98,9 +98,12 @@ export async function voteInPoll(deps: ToolDeps, input: VoteInPollInput): Promis
       confirm_token: encodeToken(draft),
       form_status: VOTE_FORM_STATUS,
       next_step:
-        'Голос НЕ отправлен. Форма голоса доко-выведена и живьём не проверена (form_status: ' +
-        'experimental_unverified). Чтобы проголосовать, повторите вызов с confirm:true, тем же ' +
-        'confirm_token и НЕИЗМЕНЁННЫМИ chat, message_id и choices.',
+        'Голос НЕ отправлен. Форма голоса подтверждена живьём (2026-07-17). Голос ПУБЛИЧЕН и ' +
+        'МЕНЯЕМЫЙ: choices - это ПОЛНЫЙ набор выбора, повторная отправка ЗАМЕНЯЕТ прежний ' +
+        '(несколько вариантов - все индексы в одном choices). Confirm сохранён, потому что сам ' +
+        'факт голоса необратим (voted_count растёт, в не-анонимном опросе вы попадаете в список ' +
+        'голосовавших); отменить голос до нуля протоколом не подтверждено. Чтобы проголосовать, ' +
+        'повторите вызов с confirm:true, тем же confirm_token и НЕИЗМЕНЁННЫМИ chat, message_id и choices.',
     };
   }
 
@@ -133,6 +136,6 @@ export async function voteInPoll(deps: ToolDeps, input: VoteInPollInput): Promis
     form_status: VOTE_FORM_STATUS,
   };
   rememberResult(token, result);
-  deps.logger.info('vote_in_poll: голос отправлен (форма experimental)', { commit: outcome.status_name });
+  deps.logger.info('vote_in_poll: голос отправлен (форма подтверждена)', { commit: outcome.status_name });
   return result;
 }

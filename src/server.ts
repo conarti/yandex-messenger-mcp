@@ -555,9 +555,12 @@ export function createServer(options: CreateServerOptions): McpServer {
       title: 'Get poll',
       description:
         'Читает опрос по chat + message_id (message_id = timestamp в микросекундах), без confirm. ' +
-        'Возвращает вопрос (title), варианты (answers, с title/votes), лимит выбора (max_choices), ' +
-        'мой выбор (my_choices) и результаты (results). Признак «это опрос» виден полем is_poll ' +
-        '(в обычной выдаче сообщения - kind:poll). Если сообщение не опрос - статус not_a_poll.',
+        'Возвращает вопрос (title), варианты (answers, с title/votes и, для не-анонимного опроса, ' +
+        'voters - кто голосовал), лимит выбора (max_choices), мой выбор (my_choices), признак анонимности ' +
+        '(is_anonymous), число проголосовавших (voted_count) и результаты (results). У анонимного опроса ' +
+        'сервер скрывает список голосующих даже по явному запросу - voters_hidden:true, доступен только ' +
+        'агрегат и свой выбор. Признак «это опрос» виден полем is_poll (в обычной выдаче сообщения - ' +
+        'kind:poll). Если сообщение не опрос - статус not_a_poll.',
       inputSchema: {
         chat: z.string().min(1).describe('ChatId либо поисковый запрос для резолва чата'),
         message_id: z
@@ -581,10 +584,13 @@ export function createServer(options: CreateServerOptions): McpServer {
     {
       title: 'Vote in poll',
       description:
-        'Голос в опросе в два шага (draft->confirm). EXPERIMENTAL: форма Vote доко-выведена и живьём НЕ проверена, ' +
-        'поэтому выдача draft И confirm несёт form_status: experimental_unverified. Без confirm возвращает draft ' +
-        'и НЕ голосует; с confirm:true и confirm_token голосует. Голос необратим (механики снятия/смены не найдено), ' +
-        'поэтому choices на шаге confirm сверяются с подтверждёнными. После голоса проверяйте myChoices через get_poll.',
+        'Голос в опросе в два шага (draft->confirm). Форма Vote{ChatId,Timestamp,Action:0,Choices} подтверждена ' +
+        'живьём (2026-07-17, commit_status:1 FULLY_COMMITTED), включая смену выбора: повторная отправка ЗАМЕНЯЕТ ' +
+        'голос, choices - ПОЛНЫЙ набор (несколько вариантов - все индексы в одном choices). Без confirm возвращает ' +
+        'draft и НЕ голосует; с confirm:true и confirm_token голосует. Confirm сохранён, потому что сам факт голоса ' +
+        'необратим (voted_count растёт, в не-анонимном опросе голосующий попадает в список голосовавших); отменить ' +
+        'голос до нуля протоколом не подтверждено. Choices на шаге confirm сверяются с подтверждёнными. После ' +
+        'голоса проверяйте myChoices через get_poll.',
       inputSchema: {
         chat: z.string().min(1).describe('ChatId либо поисковый запрос для резолва чата'),
         message_id: z

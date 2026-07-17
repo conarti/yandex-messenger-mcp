@@ -9,11 +9,18 @@
  * тип `MutationClientMessage`; `pushMutation` принимает только его. Литерал `{Reaction:{...}}`
  * бренду не соответствует и на уровне типов в отправку не пройдёт.
  *
- * МЕТКИ - СТРОКИ (мкс), НЕ float: `Timestamp` целевого сообщения несёт полную точность
- * курсора. `Reaction.Type` - int (id артворка, §17.12), не emoji.
+ * `Timestamp` ЦЕЛЕВОГО СООБЩЕНИЯ УХОДИТ НА ПРОВОД ЧИСЛОМ (проверено живьём 2026-07-17):
+ * прежняя форма клала сюда строку `message_id` как есть и получала `BACKEND_CALL_ERROR(2)`
+ * на голосе - единственный путь, что слал строку. READ-пути (reactions.ts, poll.ts) и
+ * живой веб-клиент уже кодируют ту же метку числом; билдеры этого модуля делают то же самое
+ * через `toWireTimestamp(parseMicros(...))` - BigInt внутри, Number с гардом на 2^53 на
+ * выходе, без float. Формулировка «метки - строки» из прежней версии этого комментария
+ * относилась к выдаче наружу (MCP-инструменты видят `timestamp_mcs` строкой), а не к телу
+ * мутации. `ChatId` остаётся строкой, `Reaction.Type`/`Vote.Action`/`Choices` - int как есть.
  */
 import type { AuthProvider } from '../auth/AuthProvider.js';
 import type { MessengerWsClient } from '../transport/ws/MessengerWsClient.js';
+import { parseMicros, toWireTimestamp } from '../util/timestamps.js';
 import { buildPushParams, parsePushResponse, PushNotCommittedError, type PushOutcome } from './push.js';
 
 /**
@@ -55,7 +62,7 @@ export function buildReactionMutation(input: ReactionMutationInput): MutationCli
   return asMutation({
     Reaction: {
       ChatId: input.chatId,
-      Timestamp: input.timestamp,
+      Timestamp: toWireTimestamp(parseMicros(input.timestamp)),
       Type: input.type,
       ...(input.remove === true ? { Action: REACTION_ACTION_REMOVE } : {}),
     },
@@ -77,7 +84,7 @@ export function buildPinMutation(input: PinMutationInput): MutationClientMessage
   return asMutation({
     Pin: {
       ChatId: input.chatId,
-      ...(input.timestamp !== undefined ? { Timestamp: input.timestamp } : {}),
+      ...(input.timestamp !== undefined ? { Timestamp: toWireTimestamp(parseMicros(input.timestamp)) } : {}),
     },
   });
 }
@@ -106,7 +113,7 @@ export function buildReadMarkerMutation(input: ReadMarkerInput): MutationClientM
   return asMutation({
     SeenMarker: {
       ChatId: input.chatId,
-      Timestamp: input.timestamp,
+      Timestamp: toWireTimestamp(parseMicros(input.timestamp)),
       ...(input.seqNo !== undefined ? { SeqNo: input.seqNo } : {}),
     },
   });
@@ -130,7 +137,7 @@ export function buildDeleteMutation(input: DeleteMutationInput): MutationClientM
   return asMutation({
     Plain: {
       ChatId: input.chatId,
-      Timestamp: input.timestamp,
+      Timestamp: toWireTimestamp(parseMicros(input.timestamp)),
     },
   });
 }
@@ -155,40 +162,50 @@ export function buildEditMutation(input: EditMutationInput): MutationClientMessa
   return asMutation({
     Plain: {
       ChatId: input.chatId,
-      Timestamp: input.timestamp,
+      Timestamp: toWireTimestamp(parseMicros(input.timestamp)),
       Text: { MessageText: input.text },
     },
   });
 }
 
+/** `Vote.Action` (§11.4). `0` - отдать голос: единственное значение, доступное из веб-UI (живьём) */
+export const VOTE_ACTION_CAST = 0;
+
 export interface VoteMutationInput {
   chatId: string;
   /** Метка сообщения-опроса (мкс, строка) */
   timestamp: string;
-  /** Выбранные варианты. Единица (индекс/id) и обязательность ДОКО-ВЫВЕДЕНЫ (§11.4) */
+  /** Выбранные варианты: 0-based индексы в `Poll.Answers[]` (проверено живьём, §11.4) */
   choices: number[];
 }
 
 /**
- * Голос в опросе (§9.3/§11.4). ⚠️ ФОРМА ДОКО-ВЫВЕДЕНА, живьём НЕ наблюдалась: единица
- * `Choices` (индекс варианта? id?) и семантика `Results` неизвестны, голос в self-чате
- * отправкой не проверить (создание опроса - Non-Goal). Инструмент `vote_in_poll` выпускается
- * experimental, его выдача несёт `form_status: experimental_unverified`. Механики снятия/смены
- * голоса в протоколе не обнаружено - отсюда confirm. Заменяется одной правкой билдера, если
- * живой прогон уточнит форму.
+ * Голос в опросе (§9.3/§11.4). Форма ПОДТВЕРЖДЕНА живьём (спайк 2026-07-17, Status:1
+ * FULLY_COMMITTED): ровно 4 ключа `{ChatId, Timestamp, Action, Choices}`. Прежняя доко-выведенная
+ * форма ошибалась в двух местах - отсюда `BACKEND_CALL_ERROR(2)`: (1) не хватало обязательного
+ * `Action` (0 = голосовать; без него прокси-слой не парсит запрос, та же природа ошибки, что у
+ * реакции без `Type`); (2) лишнее поле `Results` - read-only агрегат сервера, в исходящем голосе
+ * мусор, и его быть не должно. `Choices` - 0-based индексы в `Poll.Answers[]`; множественный выбор
+ * кладёт все выбранные индексы в один массив за один `push`.
  *
- * `Results:true` - доко-выведенная просьба вернуть результаты после голоса (аналог
- * `poll_info.ReturnResults`); значение живьём не подтверждено.
+ * Значения `Action` для отзыва/смены голоса из UI недостижимы (кнопки нет ни у одиночного, ни у
+ * множественного опроса после голосования) - не подтверждены, отсюда `VOTE_ACTION_CAST` несёт
+ * только «отдать голос».
  *
- * `push({ Vote:{ChatId, Timestamp, Choices, Results} })` внутри полного конверта.
+ * ⚠️ ТРЕТЬЯ ПРИЧИНА `BACKEND_CALL_ERROR(2)` (найдена живьём 2026-07-17 ПОСЛЕ фикса Action/Results
+ * выше): даже с верным набором ключей билдер клал сюда `Timestamp` СТРОКОЙ (`message_id` как
+ * есть) - бэкенд ждёт число. Спайк, подтвердивший форму `{ChatId,Timestamp,Action,Choices}`
+ * FULLY_COMMITTED, слал `Timestamp` числом; `buildVoteMutation` теперь делает то же самое.
+ *
+ * `push({ Vote:{ChatId, Timestamp, Action, Choices} })` внутри полного конверта, как у Reaction.
  */
 export function buildVoteMutation(input: VoteMutationInput): MutationClientMessage {
   return asMutation({
     Vote: {
       ChatId: input.chatId,
-      Timestamp: input.timestamp,
+      Timestamp: toWireTimestamp(parseMicros(input.timestamp)),
+      Action: VOTE_ACTION_CAST,
       Choices: input.choices,
-      Results: true,
     },
   });
 }

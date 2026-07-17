@@ -1,10 +1,10 @@
 /**
- * Чтение опроса (правит §14.3, живьём: 2026-07-17): `message_info {ChatId, Timestamp}` даёт
- * вопрос/варианты/лимит выбора из `Plain.Poll` (`Answers` - массив строк), `poll_info {ChatId,
- * Timestamp, Limit:50, ReturnResults:true}` даёт только агрегат `Results` (пуст до голосов).
- * Форма ответа обоих вызовов доко-выведена лишь частично - живой прогон подтвердил ровно эту
- * форму `Plain.Poll`; инварианты проверяются РАНТАЙМОМ (тулчейн тесты не типочекает). Фикстуры
- * синтетические.
+ * Чтение опроса (§14.3, живьём: 2026-07-17, базовый прогон + прогон с голосами): `message_info
+ * {ChatId, Timestamp}` даёт вопрос/варианты/лимит выбора из `Plain.Poll` (`Answers` - массив строк),
+ * `poll_info {ChatId, Timestamp, Limit:50, ReturnResults:true}` даёт агрегат `Results`, `MyChoices`
+ * и, при наличии голосов у не-анонимного опроса, детальный разбор `AnswerVotes` (кто и когда).
+ * У анонимного опроса `AnswerVotes`/`Results.RecentVoters` сервер скрывает даже по явному запросу.
+ * Инварианты проверяются РАНТАЙМОМ (тулчейн тесты не типочекает). Фикстуры синтетические.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { NotAPollError, readPoll, type PollInfoClient } from '../../src/protocol/poll.js';
@@ -110,17 +110,30 @@ describe('readPoll: вопрос/варианты/лимит выбора из �
   });
 });
 
-describe('readPoll: результаты - poll_info приоритетнее тела, тело - фоллбэк', () => {
-  it('пустой Results с обеих сторон (живое поведение до голосов): results:{}, votes не выставляется', async () => {
-    const { client } = fakeClient(pollMessage({ Title: 'Q', Answers: ['Да', 'Нет'], Results: {} }), { Results: {} });
+describe('readPoll: пустой опрос (без голосов) - метод рабочий, не роняется (живьём, §17.15/17.16)', () => {
+  it('poll_info отдаёт ровно {Results:{}}: votes/voters не выставляются, my_choices пуст', async () => {
+    const { client } = fakeClient(pollMessage({ Title: 'Обед?', Answers: ['Да', 'Нет'], Results: {} }), {
+      Results: {},
+    });
 
     const poll = await readPoll(client, { chatId: CHAT_ID, timestamp: TS_STR });
 
+    expect(poll.is_poll).toBe(true);
+    expect(poll.answers).toEqual([
+      { index: 0, title: 'Да' },
+      { index: 1, title: 'Нет' },
+    ]);
+    expect(poll.my_choices).toEqual([]);
+    expect(poll.is_anonymous).toBe(false);
+    expect(poll.voted_count).toBeUndefined();
+    expect(poll.voters_hidden).toBeUndefined();
+    expect(poll.recent_voters).toBeUndefined();
     expect(poll.results).toEqual({});
-    expect(poll.answers).toEqual([{ index: 0, title: 'Да' }, { index: 1, title: 'Нет' }]);
   });
+});
 
-  it('poll_info.Results используется, даже если тело несёт другой Results', async () => {
+describe('readPoll: результаты - poll_info приоритетнее тела, тело - фоллбэк', () => {
+  it('pollInfo.Results используется, даже если тело несёт другой Results', async () => {
     const { client } = fakeClient(pollMessage({ Title: 'Q', Answers: ['Да'], Results: { stale: true } }), {
       Results: { fresh: true },
     });
@@ -138,9 +151,9 @@ describe('readPoll: результаты - poll_info приоритетнее т
     expect(poll.results).toEqual({ total: 4 });
   });
 
-  it('позиционный массив в results сопоставляется с votes по индексу (лучшее усилие, форма не подтверждена)', async () => {
+  it('Results.Answers[] сопоставляется с votes по индексу (живьём, §14.3)', async () => {
     const { client } = fakeClient(pollMessage({ Title: 'Q', Answers: ['Да', 'Нет'], Results: {} }), {
-      Results: [3, 1],
+      Results: { Answers: [3, 1] },
     });
 
     const poll = await readPoll(client, { chatId: CHAT_ID, timestamp: TS_STR });
@@ -151,7 +164,7 @@ describe('readPoll: результаты - poll_info приоритетнее т
     ]);
   });
 
-  it('нераспознанная форма results (объект без Votes/Count) - votes не выставляется', async () => {
+  it('Results без ключа Answers (нераспознанная форма) - votes не выставляется', async () => {
     const { client } = fakeClient(pollMessage({ Title: 'Q', Answers: ['Да'], Results: {} }), {
       Results: { winner: 'Да' },
     });
@@ -162,8 +175,8 @@ describe('readPoll: результаты - poll_info приоритетнее т
   });
 });
 
-describe('readPoll: мой выбор - не подтверждён живьём, best-effort', () => {
-  it('poll_info без myChoices/MyChoices (живое поведение) -> my_choices: []', async () => {
+describe('readPoll: мой выбор - MyChoices из poll_info либо из тела (живьём, §14.3)', () => {
+  it('poll_info без MyChoices и тело без MyChoices -> my_choices: []', async () => {
     const { client } = fakeClient(pollMessage({ Title: 'Q', Answers: ['Да'], Results: {} }), { Results: {} });
 
     const poll = await readPoll(client, { chatId: CHAT_ID, timestamp: TS_STR });
@@ -171,10 +184,10 @@ describe('readPoll: мой выбор - не подтверждён живьём
     expect(poll.my_choices).toEqual([]);
   });
 
-  it('читает myChoices, если когда-нибудь появится в ответе poll_info (форма не подтверждена)', async () => {
+  it('читает MyChoices из poll_info (приоритет над телом)', async () => {
     const { client } = fakeClient(pollMessage({ Title: 'Q', Answers: ['Да', 'Нет'], Results: {} }), {
       Results: {},
-      myChoices: [1],
+      MyChoices: [1],
     });
 
     const poll = await readPoll(client, { chatId: CHAT_ID, timestamp: TS_STR });
@@ -182,15 +195,106 @@ describe('readPoll: мой выбор - не подтверждён живьём
     expect(poll.my_choices).toEqual([1]);
   });
 
-  it('читает PascalCase MyChoices про запас (wire-регистр не подтверждён)', async () => {
-    const { client } = fakeClient(pollMessage({ Title: 'Q', Answers: ['Да'], Results: {} }), {
+  it('фоллбэк на MyChoices из тела, если poll_info их не отдал', async () => {
+    const { client } = fakeClient(pollMessage({ Title: 'Q', Answers: ['Да'], Results: {}, MyChoices: [0] }), {
       Results: {},
-      MyChoices: [0],
     });
 
     const poll = await readPoll(client, { chatId: CHAT_ID, timestamp: TS_STR });
 
     expect(poll.my_choices).toEqual([0]);
+  });
+});
+
+describe('readPoll: кто проголосовал (AnswerVotes, только не-анонимный опрос, живьём §14.3)', () => {
+  it('answers[i].voters из AnswerVotes[].Votes (имя+время), voted_count из Results.VotedCount, recent_voters', async () => {
+    const { client } = fakeClient(
+      pollMessage({ Title: 'Обед?', Answers: ['Да', 'Нет'], MaxChoices: 2, Results: {} }),
+      {
+        Results: {
+          Version: 1700000000000000,
+          VotedCount: 1,
+          Answers: [1, 1],
+          RecentVoters: [{ Guid: 'guid-a', DisplayName: 'Автор' }],
+        },
+        MyChoices: [0, 1],
+        AnswerVotes: [
+          /* AnswerId для индекса 0 опущен (живьём, §14.3) */
+          { TotalCount: 1, Votes: [{ Timestamp: '1700000000000000', UserInfo: { DisplayName: 'Автор' } }] },
+          { AnswerId: 1, TotalCount: 1, Votes: [{ Timestamp: '1700000000000000', UserInfo: { DisplayName: 'Автор' } }] },
+        ],
+      },
+    );
+
+    const poll = await readPoll(client, { chatId: CHAT_ID, timestamp: TS_STR });
+
+    expect(poll.is_anonymous).toBe(false);
+    expect(poll.voters_hidden).toBeUndefined();
+    expect(poll.voted_count).toBe(1);
+    expect(poll.my_choices).toEqual([0, 1]);
+    expect(poll.recent_voters).toEqual([{ name: 'Автор' }]);
+    expect(poll.answers).toEqual([
+      { index: 0, title: 'Да', votes: 1, voters: [{ name: 'Автор', timestamp: '1700000000000000' }] },
+      { index: 1, title: 'Нет', votes: 1, voters: [{ name: 'Автор', timestamp: '1700000000000000' }] },
+    ]);
+  });
+
+  it('votes фоллбэком берётся из AnswerVotes[].TotalCount, если Results.Answers[] нет', async () => {
+    const { client } = fakeClient(pollMessage({ Title: 'Q', Answers: ['Да', 'Нет'], Results: {} }), {
+      Results: { VotedCount: 1 },
+      AnswerVotes: [{ AnswerId: 1, TotalCount: 2, Votes: [] }],
+    });
+
+    const poll = await readPoll(client, { chatId: CHAT_ID, timestamp: TS_STR });
+
+    expect(poll.answers).toEqual([{ index: 0, title: 'Да' }, { index: 1, title: 'Нет', votes: 2 }]);
+  });
+
+  it('голосующий без валидной метки времени отбрасывается (не выдумывается timestamp)', async () => {
+    const { client } = fakeClient(pollMessage({ Title: 'Q', Answers: ['Да'], Results: {} }), {
+      Results: {},
+      AnswerVotes: [{ TotalCount: 1, Votes: [{ UserInfo: { DisplayName: 'Автор' } }] }],
+    });
+
+    const poll = await readPoll(client, { chatId: CHAT_ID, timestamp: TS_STR });
+
+    expect(poll.answers[0]?.voters).toBeUndefined();
+  });
+});
+
+describe('readPoll: анонимный опрос - голосующие скрыты сервером (живьём §14.3, не только UI)', () => {
+  it('IsAnonymous:true в теле -> voters_hidden:true, AnswerVotes/RecentVoters недоступны, агрегат+my_choices видны', async () => {
+    const { client } = fakeClient(
+      pollMessage({ Title: 'Секрет?', Answers: ['Да', 'Нет'], IsAnonymous: true, Results: {} }),
+      {
+        /* Аноним: сервер НЕ отдаёт AnswerVotes и Results.RecentVoters даже по ReturnResults:true */
+        Results: { Version: 1700000000000000, VotedCount: 1, Answers: [1, 0] },
+        MyChoices: [0],
+      },
+    );
+
+    const poll = await readPoll(client, { chatId: CHAT_ID, timestamp: TS_STR });
+
+    expect(poll.is_anonymous).toBe(true);
+    expect(poll.voters_hidden).toBe(true);
+    expect(poll.voted_count).toBe(1);
+    expect(poll.my_choices).toEqual([0]);
+    expect(poll.recent_voters).toBeUndefined();
+    expect(poll.answers).toEqual([
+      { index: 0, title: 'Да', votes: 1 },
+      { index: 1, title: 'Нет', votes: 0 },
+    ]);
+    /* Ни одного варианта не несёт voters - список голосующих принципиально недоступен */
+    expect(poll.answers.every((answer) => answer.voters === undefined)).toBe(true);
+  });
+
+  it('IsAnonymous отсутствует в теле -> is_anonymous:false (живьём: ключ есть только при true)', async () => {
+    const { client } = fakeClient(pollMessage({ Title: 'Q', Answers: ['Да'], Results: {} }), { Results: {} });
+
+    const poll = await readPoll(client, { chatId: CHAT_ID, timestamp: TS_STR });
+
+    expect(poll.is_anonymous).toBe(false);
+    expect(poll.voters_hidden).toBeUndefined();
   });
 });
 

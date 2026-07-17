@@ -124,14 +124,17 @@ describe('set_reaction: валидация типа ДО отправки', () =
 });
 
 describe('set_reaction: известный тип уходит одним вызовом полным конвертом', () => {
-  it('ставит реакцию: Reaction ВНУТРИ ClientMessage, Type int, метка строкой, Action не шлётся', async () => {
+  it('ставит реакцию: Reaction ВНУТРИ ClientMessage, Type int, метка числом на проводе, Action не шлётся', async () => {
     const result = await setReaction(deps, { chat: CHAT_ID, message_id: MESSAGE_ID, type: KNOWN_TYPE });
 
     expect(result).toMatchObject({ status: 'ok', chat_id: CHAT_ID, type: KNOWN_TYPE, action: 'add', commit_status: 1 });
     const clientMessage = pushClientMessage();
     /* Плоская форма исключена: Reaction лежит внутри ClientMessage, не top-level кадра */
     expect(mock.requestsOf('push')[0]?.payload).not.toHaveProperty('Reaction');
-    expect(clientMessage['Reaction']).toEqual({ ChatId: CHAT_ID, Timestamp: MESSAGE_ID, Type: KNOWN_TYPE });
+    const reaction = clientMessage['Reaction'] as Record<string, unknown>;
+    expect(reaction).toEqual({ ChatId: CHAT_ID, Timestamp: Number(MESSAGE_ID), Type: KNOWN_TYPE });
+    /* Регресс на тип метки: Timestamp - число на проводе, не строка message_id */
+    expect(typeof reaction['Timestamp']).toBe('number');
     expect(clientMessage).toHaveProperty('LogData');
   });
 
@@ -141,7 +144,7 @@ describe('set_reaction: известный тип уходит одним выз
     expect(result).toMatchObject({ status: 'ok', action: 'remove' });
     expect(pushClientMessage()['Reaction']).toEqual({
       ChatId: CHAT_ID,
-      Timestamp: MESSAGE_ID,
+      Timestamp: Number(MESSAGE_ID),
       Type: KNOWN_TYPE,
       Action: 1,
     });
@@ -169,7 +172,10 @@ describe('mark_read: одним вызовом, форма доко-выведе
       form_status: 'doc_derived_unverified',
     });
     expect(mock.requestsOf('push')[0]?.payload).not.toHaveProperty('SeenMarker');
-    expect(pushClientMessage()['SeenMarker']).toEqual({ ChatId: CHAT_ID, Timestamp: MESSAGE_ID });
+    const seenMarker = pushClientMessage()['SeenMarker'] as Record<string, unknown>;
+    expect(seenMarker).toEqual({ ChatId: CHAT_ID, Timestamp: Number(MESSAGE_ID) });
+    /* Регресс на тип метки: Timestamp - число на проводе, не строка message_id */
+    expect(typeof seenMarker['Timestamp']).toBe('number');
   });
 
   it('без message_id: берёт метку самого свежего сообщения (один history + один push)', async () => {
@@ -181,7 +187,7 @@ describe('mark_read: одним вызовом, форма доко-выведе
     expect(mock.requestsOf('history')).toHaveLength(1);
     expect(pushClientMessage()['SeenMarker']).toEqual({
       ChatId: CHAT_ID,
-      Timestamp: '1784290000000000',
+      Timestamp: 1784290000000000,
       SeqNo: 77,
     });
   });
@@ -207,7 +213,10 @@ describe('pin_message: одним вызовом, семантика доко-в
       form_status: 'doc_derived_unverified',
     });
     expect(mock.requestsOf('push')[0]?.payload).not.toHaveProperty('Pin');
-    expect(pushClientMessage()['Pin']).toEqual({ ChatId: CHAT_ID, Timestamp: MESSAGE_ID });
+    const pin = pushClientMessage()['Pin'] as Record<string, unknown>;
+    expect(pin).toEqual({ ChatId: CHAT_ID, Timestamp: Number(MESSAGE_ID) });
+    /* Регресс на тип метки: Timestamp - число на проводе, не строка message_id */
+    expect(typeof pin['Timestamp']).toBe('number');
   });
 
   it('открепление: Pin без Timestamp, action unpin', async () => {

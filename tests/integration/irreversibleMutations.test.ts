@@ -7,7 +7,10 @@
  * только посчитанными сервером кадрами. draft-превью строится ЧТЕНИЕМ (message_info), поэтому в
  * draft допустим read-кадр, но не push.
  *
- * Синтетические id, живых данных нет. Форма vote ДОКО-ВЫВЕДЕНА (experimental_unverified).
+ * Синтетические id, живых данных нет. Форма vote (Action:0, БЕЗ Results) ПОДТВЕРЖДЕНА живьём
+ * (2026-07-17, FULLY_COMMITTED), включая смену выбора: повторное чтение показало смену my_choices
+ * при повторной отправке. form_status у инструмента - verified; отмена голоса до нуля протоколом
+ * не подтверждена (единственный оставшийся мелкий вопрос).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync } from 'node:fs';
@@ -163,9 +166,12 @@ describe('delete_message: draft не удаляет, confirm удаляет (AC-
 
     expect(result).toMatchObject({ status: 'deleted', chat_id: CHAT_ID, message_id: MESSAGE_ID, commit_status: 1 });
     expect(mock.requestsOf('push')[0]?.payload).not.toHaveProperty('Plain');
-    expect(pushClientMessage()['Plain']).toEqual({ ChatId: CHAT_ID, Timestamp: MESSAGE_ID });
+    const plain = pushClientMessage()['Plain'] as Record<string, unknown>;
+    expect(plain).toEqual({ ChatId: CHAT_ID, Timestamp: Number(MESSAGE_ID) });
+    /* Регресс на тип метки: Timestamp - число на проводе, не строка message_id */
+    expect(typeof plain['Timestamp']).toBe('number');
     /* Удаление = пустой Plain: content-поля нет */
-    expect(pushClientMessage()['Plain']).not.toHaveProperty('Text');
+    expect(plain).not.toHaveProperty('Text');
   });
 
   it('после удаления повторное чтение приходит с Deleted=true', async () => {
@@ -240,11 +246,14 @@ describe('edit_message: draft «было -> станет» не правит, co
 
     expect(result).toMatchObject({ status: 'edited', chat_id: CHAT_ID, new_text: 'новый текст', commit_status: 1 });
     expect(mock.requestsOf('push')[0]?.payload).not.toHaveProperty('Plain');
-    expect(pushClientMessage()['Plain']).toEqual({
+    const plain = pushClientMessage()['Plain'] as Record<string, unknown>;
+    expect(plain).toEqual({
       ChatId: CHAT_ID,
-      Timestamp: MESSAGE_ID,
+      Timestamp: Number(MESSAGE_ID),
       Text: { MessageText: 'новый текст' },
     });
+    /* Регресс на тип метки: Timestamp - число на проводе, не строка message_id */
+    expect(typeof plain['Timestamp']).toBe('number');
   });
 
   it('текст на confirm отличается от подтверждённого -> fingerprint_mismatch, push не уходит', async () => {
@@ -281,8 +290,8 @@ describe('edit_message: draft «было -> станет» не правит, co
   });
 });
 
-describe('vote_in_poll: draft->confirm, форма experimental (AC-29 условный, AC-31)', () => {
-  it('draft: form_status experimental_unverified присутствует, голос НЕ отправлен', async () => {
+describe('vote_in_poll: draft->confirm, форма подтверждена живьём (AC-29 закрыт, AC-31)', () => {
+  it('draft: form_status verified присутствует, голос НЕ отправлен', async () => {
     const result = (await voteInPoll(deps, {
       chat: CHAT_ID,
       message_id: MESSAGE_ID,
@@ -290,13 +299,13 @@ describe('vote_in_poll: draft->confirm, форма experimental (AC-29 усло�
     })) as VoteInPollDraft;
 
     expect(result.status).toBe('draft');
-    /* Предупреждение о непроверенной форме стоит в точке необратимого действия, не только в README */
-    expect(result.form_status).toBe('experimental_unverified');
+    /* Маркер подтверждённой формы стоит в точке необратимого действия, не только в README */
+    expect(result.form_status).toBe('verified');
     expect(result.choices).toEqual([0, 2]);
     expect(mock.requestsOf('push')).toHaveLength(0);
   });
 
-  it('confirm: form_status experimental_unverified присутствует И В ВЫВОДЕ confirm; Vote одним push', async () => {
+  it('confirm: form_status verified присутствует И В ВЫВОДЕ confirm; Vote одним push', async () => {
     const draft = (await voteInPoll(deps, {
       chat: CHAT_ID,
       message_id: MESSAGE_ID,
@@ -312,18 +321,22 @@ describe('vote_in_poll: draft->confirm, форма experimental (AC-29 усло�
     })) as VoteInPollVoted;
 
     expect(result).toMatchObject({ status: 'voted', chat_id: CHAT_ID, commit_status: 1 });
-    /* form_status в ВЫВОДЕ confirm - главное требование AC-29 (условный долг помечен в точке действия) */
-    expect(result.form_status).toBe('experimental_unverified');
+    /* form_status в ВЫВОДЕ confirm - главное требование AC-29 (закрыт, подтверждено живьём 2026-07-17) */
+    expect(result.form_status).toBe('verified');
     expect(mock.requestsOf('push')[0]?.payload).not.toHaveProperty('Vote');
-    expect(pushClientMessage()['Vote']).toEqual({
+    /* Форма подтверждена живьём (2026-07-17): Action:0 обязателен, Results не шлётся */
+    const vote = pushClientMessage()['Vote'] as Record<string, unknown>;
+    expect(vote).toEqual({
       ChatId: CHAT_ID,
-      Timestamp: MESSAGE_ID,
+      Timestamp: Number(MESSAGE_ID),
+      Action: 0,
       Choices: [0, 2],
-      Results: true,
     });
+    /* Регресс на тип метки: Timestamp - число на проводе (иначе BACKEND_CALL_ERROR(2), живая проба 2026-07-17) */
+    expect(typeof vote['Timestamp']).toBe('number');
   });
 
-  it('AC-29 условный: без живого myChoices голос НЕ объявляется проверенным (form_status держит долг)', async () => {
+  it('AC-29 закрыт: form_status verified присутствует и в draft, и в confirm (обе стадии подтверждены)', async () => {
     const draft = (await voteInPoll(deps, { chat: CHAT_ID, message_id: MESSAGE_ID, choices: [1] })) as VoteInPollDraft;
     const voted = (await voteInPoll(deps, {
       chat: CHAT_ID,
@@ -333,9 +346,9 @@ describe('vote_in_poll: draft->confirm, форма experimental (AC-29 усло�
       confirm_token: draft.confirm_token,
     })) as VoteInPollVoted;
 
-    /* Оба вывода несут маркер experimental: AC-29 засчитывается только против живого myChoices */
-    expect(draft.form_status).toBe('experimental_unverified');
-    expect(voted.form_status).toBe('experimental_unverified');
+    /* Оба вывода несут маркер verified: форма голоса подтверждена живьём, AC-29 закрыт */
+    expect(draft.form_status).toBe('verified');
+    expect(voted.form_status).toBe('verified');
   });
 });
 
