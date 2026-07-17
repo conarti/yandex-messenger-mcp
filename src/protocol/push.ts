@@ -67,6 +67,73 @@ export function buildPlainTextClientMessage(input: PlainTextInput): Record<strin
   };
 }
 
+/** `FileInfo.Source` (§11.1): загрузка способом Disk даёт `DISK=1` */
+const FILE_SOURCE_DISK = 1;
+
+export interface FileAttachmentInput {
+  chatId: string;
+  payloadId: string;
+  /** `file_id` из `add_files` (§12.1) - кладётся в `FileInfo.Id2` */
+  fileId: string;
+  /** Имя файла (`FileInfo.Name`) */
+  name?: string;
+  /** Размер в байтах (`FileInfo.Size`) */
+  size?: number;
+}
+
+export interface ImageAttachmentInput extends FileAttachmentInput {
+  width?: number;
+  height?: number;
+}
+
+/** `FileInfo` (§11.1): на проводе несёт `Id2` + Name/Size/Source, URL/бакета тут нет */
+function buildFileInfo(input: FileAttachmentInput): Record<string, unknown> {
+  return {
+    Id2: input.fileId,
+    ...(input.name !== undefined ? { Name: input.name } : {}),
+    ...(input.size !== undefined ? { Size: input.size } : {}),
+    Source: FILE_SOURCE_DISK,
+  };
+}
+
+/**
+ * Вариант `ClientMessage.Plain.Image` для отправки картинки (§11.1/§12.1).
+ *
+ * ⚠️ ФОРМА ИСХОДЯЩЕГО ПУТИ ДОКО-ВЫВЕДЕНА (US-009): входящие `Image` живьём наблюдались,
+ * отправка - нет. `Width`/`Height` не проставляются намеренно: декодировать картинку ради
+ * метаданных не нужно, для доставки достаточно `FileInfo`; при живой проверке добавляются
+ * одной правкой. `Timestamp` не ставится - это НОВОЕ сообщение, не правка.
+ */
+export function buildImageClientMessage(input: ImageAttachmentInput): Record<string, unknown> {
+  return {
+    Plain: {
+      ChatId: input.chatId,
+      PayloadId: input.payloadId,
+      Image: {
+        ...(input.width !== undefined ? { Width: input.width } : {}),
+        ...(input.height !== undefined ? { Height: input.height } : {}),
+        FileInfo: buildFileInfo(input),
+      },
+    },
+  };
+}
+
+/**
+ * Вариант `ClientMessage.Plain.MiscFile` для отправки произвольного файла (§11.1/§12.1).
+ * ⚠️ Форма исходящего пути доко-выведена (US-009), см. buildImageClientMessage.
+ */
+export function buildFileClientMessage(input: FileAttachmentInput): Record<string, unknown> {
+  return {
+    Plain: {
+      ChatId: input.chatId,
+      PayloadId: input.payloadId,
+      MiscFile: {
+        FileInfo: buildFileInfo(input),
+      },
+    },
+  };
+}
+
 export interface PushParamsInput {
   clientMessage: Record<string, unknown>;
   /** Из `waitForSubscriptionId()`; пустой = кадр `subscribed` не пришёл (§17.2) */

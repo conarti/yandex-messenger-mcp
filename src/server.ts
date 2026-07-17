@@ -18,6 +18,7 @@ import { markRead } from './mcp/tools/markRead.js';
 import { pinMessage } from './mcp/tools/pinMessage.js';
 import { joinThread, leaveThread } from './protocol/threads.js';
 import { search } from './mcp/tools/search.js';
+import { sendFile } from './mcp/tools/sendFile.js';
 import { sendMessage } from './mcp/tools/sendMessage.js';
 import { setReaction } from './mcp/tools/setReaction.js';
 import { voteInPoll } from './mcp/tools/voteInPoll.js';
@@ -35,6 +36,7 @@ export const TOOL_NAMES = [
   'get_thread',
   'search',
   'send_message',
+  'send_file',
   'set_reaction',
   'mark_read',
   'pin_message',
@@ -342,6 +344,40 @@ export function createServer(options: CreateServerOptions): McpServer {
         return jsonResult(await sendMessage(deps, args));
       } catch (error) {
         return errorResult('send_message', error, logger);
+      }
+    },
+  );
+
+  server.registerTool(
+    'send_file',
+    {
+      title: 'Send file or image',
+      description:
+        'Отправка картинки или файла в два шага: без confirm возвращает превью (draft: имя/размер/тип/чат) ' +
+        'и НЕ заливает байты; с confirm:true и confirm_token из превью заливает (3 шага §12.1) и отправляет. ' +
+        'Отправка необратима, поэтому чат и файл на шаге confirm сверяются с подтверждёнными; расхождение ' +
+        'отклоняется. Тип определяется по расширению (image или file); voice/gallery не отправляются (только чтение). ' +
+        'После отправки сообщение читается обратно по file_id и вложение скачивается download_attachment.',
+      inputSchema: {
+        chat: z.string().min(1).describe('ChatId либо поисковый запрос для резолва чата'),
+        path: z.string().min(1).describe('Абсолютный путь к файлу или картинке на диске'),
+        confirm: z
+          .boolean()
+          .optional()
+          .describe('false/отсутствует - вернуть draft-превью (байты НЕ льются); true - залить и отправить (необратимо)'),
+        confirm_token: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Токен из draft-превью. Обязателен при confirm:true'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    },
+    async (args) => {
+      try {
+        return jsonResult(await sendFile(deps, args));
+      } catch (error) {
+        return errorResult('send_file', error, logger);
       }
     },
   );
