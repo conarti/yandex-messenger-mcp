@@ -32,14 +32,6 @@ import { createHash } from 'node:crypto';
 /** Операции, несущие confirm (необратимый путь). Реверсибельные мутации токена не имеют. */
 export type ConfirmOp = 'send' | 'delete' | 'edit' | 'send_file' | 'vote';
 
-/** Причина отказа confirm. Всегда громко: тихий отказ на пути отправки неотличим от успеха */
-export type ConfirmRejectReason =
-  | 'token_missing'
-  | 'token_malformed'
-  | 'op_mismatch'
-  | 'chat_mismatch'
-  | 'fingerprint_mismatch';
-
 /**
  * Начинка confirm-токена. Нагрузки тут нет - только её отпечаток: токен ходит через чужие
  * руки. `payload_id` есть только у send-пути (ключ серверной дедупликации, §11.1).
