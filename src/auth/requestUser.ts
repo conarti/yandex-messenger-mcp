@@ -12,10 +12,11 @@
  * пользователь и `secretSign = data.secret_sign` (у нас всегда undefined); иначе это
  * гостевая ветка, где `secretSign = {sign, ts}` берётся из корня ответа.
  *
- * CSRF-токен запрашивается здесь же и не выносится в модуль: он нужен ровно одному
- * вызову, отдельная абстракция под него была бы преждевременной.
+ * CSRF-токен фетчится общим `fetchCsrfToken` (auth/csrfToken.ts): тот же токен нужен
+ * registry-мутациям join/leave, поэтому логика вынесена и переиспользуется.
  */
 import { AuthError, type SecretSign } from './AuthProvider.js';
+import { fetchCsrfToken, registryHeaders } from './csrfToken.js';
 
 export interface RequestUserOptions {
   cookieHeader: string;
@@ -51,35 +52,6 @@ export function resolveUserParam(user: RequestUserUser): string {
 
 /** Коды ответа registry, означающие протухшую/отвергнутую cookie */
 const COOKIE_ERROR_CODES = new Set(['invalid_cookies', 'not_authorized', 'no_credentials', 'cookie_auth_failed']);
-
-function baseHeaders(cookieHeader: string): Record<string, string> {
-  return {
-    Cookie: cookieHeader,
-    Accept: 'application/json',
-    Referer: 'https://yandex.ru/chat',
-  };
-}
-
-/** POST csrf-token/ -> `{token}` голым, без обёртки {status,data} (§17.6) */
-async function fetchCsrfToken(options: RequestUserOptions, doFetch: typeof fetch): Promise<string> {
-  const response = await doFetch(options.csrfTokenUrl, {
-    method: 'POST',
-    headers: baseHeaders(options.cookieHeader),
-  });
-
-  if (response.status === 401 || response.status === 403) {
-    throw new AuthError(`csrf-token отверг cookie (HTTP ${response.status})`, 'cookie');
-  }
-  if (!response.ok) {
-    throw new AuthError(`csrf-token вернул HTTP ${response.status}`, 'protocol');
-  }
-
-  const payload = (await response.json()) as { token?: unknown };
-  if (typeof payload.token !== 'string' || payload.token.length === 0) {
-    throw new AuthError('csrf-token не вернул поле token', 'csrf');
-  }
-  return payload.token;
-}
 
 interface RegistryUser {
   guid?: unknown;
@@ -119,7 +91,7 @@ function parseSecretSign(data: NonNullable<RequestUserPayload['data']>): SecretS
  */
 export async function requestUser(options: RequestUserOptions): Promise<RequestUserResult> {
   const doFetch = options.fetchImpl ?? fetch;
-  const token = await fetchCsrfToken(options, doFetch);
+  const token = await fetchCsrfToken(options.csrfTokenUrl, options.cookieHeader, doFetch);
 
   const form = new FormData();
   form.append('request', JSON.stringify({ method: 'request_user', params: { bind_phone_number: false } }));
@@ -127,7 +99,7 @@ export async function requestUser(options: RequestUserOptions): Promise<RequestU
   const response = await doFetch(options.apiUrl, {
     method: 'POST',
     body: form,
-    headers: { ...baseHeaders(options.cookieHeader), 'X-CSRF-TOKEN': token },
+    headers: { ...registryHeaders(options.cookieHeader), 'X-CSRF-TOKEN': token },
   });
 
   if (response.status === 401) {

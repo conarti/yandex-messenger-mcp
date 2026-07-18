@@ -8,10 +8,15 @@
  * прочитанном self-чате `SeenMarker` отвечает `DUPLICATE(8)` (сервер сверил с текущей
  * seen-позицией и не нашёл нового), а `ReadMarker`/`UnseenMarker` коммитят `FULLY_COMMITTED(1)`
  * заново - то есть seen-позицию (от которой считается непрочитанное) двигает именно
- * `SeenMarker`. Обнуление НЕНУЛЕВОГО непрочитанного в самом self-чате структурно не наблюдаемо
- * (свои же исходящие сразу «увидены мной»), поэтому эффект на счётчик остаётся долгом:
- * `form_status: live_accepted_effect_unverified`. Обоснование выбора - в
- * protocol/mutations.buildReadMarkerMutation.
+ * `SeenMarker`.
+ *
+ * ЭФФЕКТ ПОДТВЕРЖДЁН ЖИВЬЁМ (2026-07-18): `SeenMarker` реально обнуляет непрочитанное.
+ * Раньше обнуление НЕНУЛЕВОГО непрочитанного было долгом - в self-чате оно структурно не
+ * наблюдаемо (свои же исходящие сразу «увидены мной»). Проверено в приватном чате с
+ * непрочитанными сообщениями от второго аккаунта пользователя: `unread_count:2` ->
+ * `mark_read` -> `commit_status:1 FULLY_COMMITTED` (не `DUPLICATE`, т.к. было что
+ * коммитить) -> повторное чтение чата дало `unread_count:0`. `form_status: verified`.
+ * Обоснование выбора маркера - в protocol/mutations.buildReadMarkerMutation.
  *
  * ГРАНИЦА «ДО КУДА ПРОЧИТАНО». Непрочитанное в §17.9 - это `LastSeqNo - LastSeenByMeSeqNo`.
  * Обнулить его = отметить увиденным вплоть до самого свежего сообщения. Дал вызывающий
@@ -44,10 +49,11 @@ export type MarkReadResult =
       /** Выбранный маркер: форма принята живьём, seen-позиция двигается им (US-009) */
       marker: 'SeenMarker';
       /**
-       * Форма принята бэкендом живьём (коммитит, не `BACKEND_CALL_ERROR`), маркер seen-позиции
-       * подтверждён перебором; обнуление ненулевого непрочитанного в self-чате не наблюдаемо.
+       * Форма и эффект подтверждены живьём (US-009, 2026-07-18): маркер коммитится бэкендом
+       * и реально обнуляет непрочитанное - проверено на чате с непрочитанными сообщениями
+       * от другого аккаунта (`unread_count` 2 -> 0).
        */
-      form_status: 'live_accepted_effect_unverified';
+      form_status: 'verified';
     }
   | { status: 'empty_chat'; chat_id: string }
   | { status: 'ambiguous_chat'; candidates: ChatCandidate[] }
@@ -106,6 +112,6 @@ export async function markRead(deps: ToolDeps, input: MarkReadInput): Promise<Ma
     commit_status: outcome.status,
     commit_status_name: outcome.status_name,
     marker: 'SeenMarker',
-    form_status: 'live_accepted_effect_unverified',
+    form_status: 'verified',
   };
 }

@@ -12,6 +12,8 @@
  *
  * JOIN/LEAVE - ПОДПИСКА, НЕ СОЗДАНИЕ (спайк 1). `join_to_thread`/`leave_thread` идут HTTP-registry
  * (§10) и возвращают `{chat_member}` - отношение участника к треду. Создания треда среди них нет.
+ * Это registry-МУТАЦИИ, поэтому вызов помечается `{csrf:true}`: без `X-CSRF-TOKEN` сервер
+ * отвечает `bad_csrf_token` (как `request_user`, §17.4).
  */
 import type { RegistryHttpClient } from '../transport/RegistryHttpClient.js';
 import { ResponseStatus } from '../transport/ws/frameTypes.js';
@@ -122,7 +124,8 @@ export async function openThread(
 
   return {
     thread_id: input.threadId,
-    empty: false,
+    /* Пуст = сервер не отдал ни одного сообщения. Тред без сообщений пуст, даже когда history отвечает ok (у родителя has_thread:false) */
+    empty: rawCount === 0,
     messages,
     ...(parentMessage !== undefined ? { parent_message: parentMessage } : {}),
     ...(oldest !== undefined ? { next_before: oldest.timestamp_mcs } : {}),
@@ -130,20 +133,20 @@ export async function openThread(
   };
 }
 
-/** Вступает в тред (`join_to_thread {thread_id}`, HTTP §10). Подписка, не создание */
+/** Вступает в тред (`join_to_thread {thread_id}`, HTTP §10). Подписка, не создание. Мутация -> CSRF */
 export async function joinThread(
   http: Pick<RegistryHttpClient, 'call'>,
   threadId: string,
 ): Promise<ThreadMembership> {
-  const data = await http.call<{ chat_member?: unknown }>(JOIN_THREAD_METHOD, { thread_id: threadId });
+  const data = await http.call<{ chat_member?: unknown }>(JOIN_THREAD_METHOD, { thread_id: threadId }, { csrf: true });
   return { chat_member: data?.chat_member };
 }
 
-/** Выходит из треда (`leave_thread {thread_id}`, HTTP §10) */
+/** Выходит из треда (`leave_thread {thread_id}`, HTTP §10). Мутация -> CSRF */
 export async function leaveThread(
   http: Pick<RegistryHttpClient, 'call'>,
   threadId: string,
 ): Promise<ThreadMembership> {
-  const data = await http.call<{ chat_member?: unknown }>(LEAVE_THREAD_METHOD, { thread_id: threadId });
+  const data = await http.call<{ chat_member?: unknown }>(LEAVE_THREAD_METHOD, { thread_id: threadId }, { csrf: true });
   return { chat_member: data?.chat_member };
 }

@@ -13,6 +13,7 @@ import {
   type ProfileSessionSource,
   type Whoami,
 } from './AuthProvider.js';
+import { fetchCsrfToken } from './csrfToken.js';
 import { requestUser, resolveUserParam, type RequestUserResult } from './requestUser.js';
 import type { Logger } from '../util/logger.js';
 
@@ -23,12 +24,16 @@ export interface CookieAuthProviderDeps {
   logger?: Logger;
   /** Подменяется в тестах */
   requestUserImpl?: typeof requestUser;
+  /** Подменяется в тестах; по умолчанию глобальный fetch */
+  fetchImpl?: typeof fetch;
 }
 
 export class CookieAuthProvider implements AuthProvider {
   private cached: AuthContext | undefined;
   private pending: Promise<AuthContext> | undefined;
   private refreshing: Promise<ProfileSession> | undefined;
+  /** CSRF-токен привязан к текущей cookie: кэшируем, чистим при инвалидации/рефреше */
+  private cachedCsrfToken: string | undefined;
   /**
    * Эпоха кэша. Инкрементируется каждой инвалидацией, чтобы `build()`, стартовавший ДО неё,
    * не мог записать в кэш уже мёртвую cookie, резолвясь после.
@@ -59,11 +64,27 @@ export class CookieAuthProvider implements AuthProvider {
     return { uid: context.userUid, guid: context.userGuid };
   }
 
+  /**
+   * CSRF-токен на текущей cookie. Кэшируется: он живёт, пока жива cookie.
+   * `forceRefresh` перефетчивает - путь восстановления после `bad_csrf_token`.
+   */
+  async getCsrfToken(forceRefresh = false): Promise<string> {
+    if (!forceRefresh && this.cachedCsrfToken !== undefined) {
+      return this.cachedCsrfToken;
+    }
+    const context = await this.getAuthContext();
+    const token = await fetchCsrfToken(this.deps.csrfTokenUrl, context.cookieHeader, this.deps.fetchImpl ?? fetch);
+    this.cachedCsrfToken = token;
+    return token;
+  }
+
   /** Транспорт получил 401: сбрасываем кэш и рефрешим профиль */
   async onAuthFailure(): Promise<void> {
     this.deps.logger?.warn('auth: креды отвергнуты, рефреш профиля');
     this.generation += 1;
     this.cached = undefined;
+    /* Новая cookie обесценивает старый CSRF-токен - чистим, чтобы следующий getCsrfToken перефетчил */
+    this.cachedCsrfToken = undefined;
     /* Сборку на мёртвой cookie бросаем: её результат уже не годен новым вызывающим */
     this.pending = undefined;
     await this.refreshProfile();

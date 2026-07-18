@@ -83,7 +83,9 @@ export function createServer(options: CreateServerOptions): McpServer {
     {
       title: 'List chats',
       description:
-        'Список чатов с метаданными (последнее сообщение, флаг непрочитанных), отсортированный по свежести.',
+        'Список чатов с метаданными (последнее сообщение, флаг непрочитанных), отсортированный по свежести. ' +
+        'Текст последнего сообщения по умолчанию НЕ отдаётся (только метаданные) - включите ' +
+        'include_last_message_text, если он действительно нужен.',
       inputSchema: {
         limit: z
           .int()
@@ -95,6 +97,14 @@ export function createServer(options: CreateServerOptions): McpServer {
           .boolean()
           .optional()
           .describe('Вернуть только чаты с непрочитанными сообщениями'),
+        include_last_message_text: z
+          .boolean()
+          .optional()
+          .describe(
+            'Вернуть полный текст последнего сообщения каждого чата. По умолчанию false: ' +
+              'отдаются только метаданные (без текста, цитат и имён файлов), чтобы не тащить ' +
+              'содержимое чужих переписок в контекст модели.',
+          ),
       },
       annotations: { readOnlyHint: true },
     },
@@ -422,8 +432,8 @@ export function createServer(options: CreateServerOptions): McpServer {
       description:
         'Отмечает чат прочитанным ОДНИМ вызовом, без confirm (безобидно). Без message_id отмечает ' +
         'прочитанным до самого свежего сообщения (тянет последнюю страницу истории). ' +
-        'ПРИМЕЧАНИЕ: форма маркера (SeenMarker) принята бэкендом живьём и подтверждена как маркер ' +
-        'seen-позиции; обнуление ненулевого непрочитанного в self-чате не наблюдаемо - см. form_status в выдаче.',
+        'Семантика маркера (SeenMarker) подтверждена живьём: обнуляет непрочитанное ' +
+        '(form_status: verified в выдаче).',
       inputSchema: {
         chat: z.string().min(1).describe('ChatId либо поисковый запрос для резолва чата'),
         message_id: z

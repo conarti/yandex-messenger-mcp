@@ -55,6 +55,12 @@ export interface AuthProvider {
   /** Идентичность пользователя */
   getWhoami(): Promise<Whoami>;
   /**
+   * CSRF-токен для registry-МУТАЦИЙ (join/leave), как и для `request_user` (§17.4).
+   * Реализация вправе кэшировать. `forceRefresh` инвалидирует кэш и перефетчивает - это
+   * путь восстановления после `bad_csrf_token` (токен мог протухнуть).
+   */
+  getCsrfToken(forceRefresh?: boolean): Promise<string>;
+  /**
    * Сигнал транспорта, что текущие креды отвергнуты (401 / cookie auth failed).
    * Реализация обязана инвалидировать кэш, чтобы следующий getAuthContext() переавторизовался.
    */

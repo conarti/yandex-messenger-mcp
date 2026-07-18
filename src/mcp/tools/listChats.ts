@@ -21,6 +21,8 @@ import type { ToolDeps } from './deps.js';
 export interface ListChatsInput {
   limit?: number | undefined;
   unread_only?: boolean | undefined;
+  /** Опт-ин на полный текст последнего сообщения. По умолчанию отдаются только метаданные */
+  include_last_message_text?: boolean | undefined;
 }
 
 export interface ListChatsResult {
@@ -39,7 +41,7 @@ export async function listChats(deps: ToolDeps, input: ListChatsInput = {}): Pro
     buildHistoryParams({ limit: 1, withChatData: true }),
   );
 
-  const all = normalizeChats(extractChats(response));
+  const all = normalizeChats(extractChats(response), input.include_last_message_text === true);
   const filtered = input.unread_only === true ? all.filter((chat) => chat.unread) : all;
 
   deps.logger.debug('list_chats: чаты получены', {

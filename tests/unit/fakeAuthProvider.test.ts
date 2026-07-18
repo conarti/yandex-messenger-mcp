@@ -38,4 +38,13 @@ describe('FakeAuthProvider', () => {
 
     expect(provider.authFailures).toBe(2);
   });
+
+  it('отдаёт синтетический CSRF-токен и пишет forceRefresh каждого вызова', async () => {
+    const provider = new FakeAuthProvider();
+
+    await expect(provider.getCsrfToken()).resolves.toBe('fake-csrf-token');
+    await provider.getCsrfToken(true);
+
+    expect(provider.csrfTokenCalls).toEqual([false, true]);
+  });
 });

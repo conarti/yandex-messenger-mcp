@@ -24,13 +24,29 @@ class FakeProfile implements ProfileSessionSource {
   }
 }
 
-function provider(profile: ProfileSessionSource, requestUserImpl: () => Promise<RequestUserResult>) {
+function provider(
+  profile: ProfileSessionSource,
+  requestUserImpl: () => Promise<RequestUserResult>,
+  fetchImpl?: typeof fetch,
+) {
   return new CookieAuthProvider({
     profile,
     apiUrl: 'https://api.test/',
     csrfTokenUrl: 'https://csrf.test/',
     requestUserImpl: requestUserImpl as never,
+    ...(fetchImpl !== undefined ? { fetchImpl } : {}),
   });
+}
+
+/** Фейковый fetch csrf-token: отдаёт токен по счётчику и считает обращения */
+function fakeCsrfFetch(tokens: string[]) {
+  let index = 0;
+  const impl = (async () => {
+    const token = tokens[Math.min(index, tokens.length - 1)];
+    index += 1;
+    return new Response(JSON.stringify({ token }), { status: 200 });
+  }) as typeof fetch;
+  return { impl, calls: () => index };
 }
 
 describe('CookieAuthProvider', () => {
@@ -162,6 +178,37 @@ describe('CookieAuthProvider', () => {
     await Promise.all([auth.onAuthFailure(), auth.onAuthFailure()]);
 
     expect(profile.refreshCalls).toBe(1);
+  });
+
+  it('getCsrfToken фетчит токен и кэширует: повторный вызов не ходит в сеть снова', async () => {
+    const { impl, calls } = fakeCsrfFetch(['csrf-1']);
+    const auth = provider(new FakeProfile(), async () => ({ user: WHOAMI }), impl);
+
+    await expect(auth.getCsrfToken()).resolves.toBe('csrf-1');
+    await expect(auth.getCsrfToken()).resolves.toBe('csrf-1');
+
+    expect(calls()).toBe(1);
+  });
+
+  it('getCsrfToken(forceRefresh) перефетчивает - путь восстановления после bad_csrf_token', async () => {
+    const { impl, calls } = fakeCsrfFetch(['csrf-1', 'csrf-2']);
+    const auth = provider(new FakeProfile(), async () => ({ user: WHOAMI }), impl);
+
+    await expect(auth.getCsrfToken()).resolves.toBe('csrf-1');
+    await expect(auth.getCsrfToken(true)).resolves.toBe('csrf-2');
+
+    expect(calls()).toBe(2);
+  });
+
+  it('onAuthFailure инвалидирует и CSRF-токен: новая cookie обесценивает старый токен', async () => {
+    const { impl, calls } = fakeCsrfFetch(['csrf-1', 'csrf-2']);
+    const auth = provider(new FakeProfile(), async () => ({ user: WHOAMI }), impl);
+
+    await auth.getCsrfToken();
+    await auth.onAuthFailure();
+    await expect(auth.getCsrfToken()).resolves.toBe('csrf-2');
+
+    expect(calls()).toBe(2);
   });
 
   it('прокидывает secretSign, если сервер его прислал (гостевая ветка)', async () => {

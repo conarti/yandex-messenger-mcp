@@ -16,12 +16,16 @@ export interface FakeAuthProviderOptions {
   context?: Partial<AuthContext>;
   /** Заставляет getAuthContext() падать - для тестов пути 401 */
   failWith?: Error;
+  /** Синтетический CSRF-токен; по умолчанию 'fake-csrf-token' */
+  csrfToken?: string;
 }
 
 export class FakeAuthProvider implements AuthProvider {
   readonly context: AuthContext;
   /** Сколько раз транспорт сообщил об отказе кред */
   authFailures = 0;
+  /** История запросов CSRF-токена: значение forceRefresh каждого вызова getCsrfToken */
+  readonly csrfTokenCalls: boolean[] = [];
 
   constructor(private readonly options: FakeAuthProviderOptions = {}) {
     this.context = { ...DEFAULT_CONTEXT, ...options.context };
@@ -36,6 +40,11 @@ export class FakeAuthProvider implements AuthProvider {
 
   async getWhoami(): Promise<Whoami> {
     return { uid: this.context.userUid, guid: this.context.userGuid };
+  }
+
+  async getCsrfToken(forceRefresh = false): Promise<string> {
+    this.csrfTokenCalls.push(forceRefresh);
+    return this.options.csrfToken ?? 'fake-csrf-token';
   }
 
   async onAuthFailure(): Promise<void> {

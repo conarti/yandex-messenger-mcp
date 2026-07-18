@@ -35,7 +35,12 @@ export interface Chat {
   unread_count: number;
   unread: boolean;
   muted: boolean;
-  /** Есть только если history звали с `Limit >= 1` */
+  /**
+   * Последнее сообщение чата. Есть только если history звали с `Limit >= 1`.
+   * ПРИВАТНОСТЬ: по умолчанию несёт лишь метаданные (id/время/kind/автор/флаги), БЕЗ `text`,
+   * цитат и вложений - list_chats тащит его в контекст модели по всем чатам сразу. Полный текст
+   * отдаётся только по опт-ину (`includeLastMessageText`).
+   */
   last_message?: Message;
 }
 
@@ -60,7 +65,33 @@ function resolveName(raw: Record<string, unknown>): string | undefined {
   return stringOr(asObject(raw['ChatInfo'])?.['Name']);
 }
 
-export function normalizeChat(rawChat: unknown): Chat | undefined {
+/**
+ * Приватная проекция последнего сообщения: метаданные без контента.
+ * Режем `text`, цитаты (`context`) и вложения (`attachments` = имена файлов/рефы) - всё это
+ * содержимое чужой переписки. Оставляем адрес, время, автора, вид и флаги: по ним модель
+ * понимает «что и когда», не видя «о чём». `kind` при этом сохраняет тип контента (image/voice/...).
+ */
+function toLastMessageMeta(message: Message): Message {
+  return {
+    id: message.id,
+    ...(message.chat_id !== undefined ? { chat_id: message.chat_id } : {}),
+    timestamp: message.timestamp,
+    timestamp_mcs: message.timestamp_mcs,
+    ...(message.seq_no !== undefined ? { seq_no: message.seq_no } : {}),
+    from: message.from,
+    kind: message.kind,
+    attachments: [],
+    edited: message.edited,
+    ...(message.edited_at !== undefined ? { edited_at: message.edited_at } : {}),
+    deleted: message.deleted,
+  };
+}
+
+/**
+ * @param includeLastMessageText - опт-ин: отдать полный текст последнего сообщения.
+ *   По умолчанию false - см. `Chat.last_message` (приватность).
+ */
+export function normalizeChat(rawChat: unknown, includeLastMessageText = false): Chat | undefined {
   const raw = asObject(rawChat);
   const chatId = stringOr(raw?.['ChatId']);
   if (raw === undefined || chatId === undefined) {
@@ -79,6 +110,9 @@ export function normalizeChat(rawChat: unknown): Chat | undefined {
   const messages = normalizeMessages(raw['Messages']);
   /* Limit:1 отдаёт ровно последнее сообщение; при Limit:0 массива нет вовсе */
   const lastMessage = messages[messages.length - 1];
+  /* По умолчанию отдаём проекцию без контента; полный текст - только по явному опт-ину */
+  const lastMessageOut =
+    lastMessage === undefined ? undefined : includeLastMessageText ? lastMessage : toLastMessageMeta(lastMessage);
 
   return {
     chat_id: chatId,
@@ -91,18 +125,21 @@ export function normalizeChat(rawChat: unknown): Chat | undefined {
     unread_count: unreadCount,
     unread: unreadCount > 0,
     muted: raw['Muted'] === true,
-    ...(lastMessage !== undefined ? { last_message: lastMessage } : {}),
+    ...(lastMessageOut !== undefined ? { last_message: lastMessageOut } : {}),
   };
 }
 
-/** Нормализует `Chats[]` и сортирует по свежести (новые первыми) */
-export function normalizeChats(rawChats: unknown): Chat[] {
+/**
+ * Нормализует `Chats[]` и сортирует по свежести (новые первыми).
+ * @param includeLastMessageText - опт-ин на полный текст последнего сообщения (дефолт false).
+ */
+export function normalizeChats(rawChats: unknown, includeLastMessageText = false): Chat[] {
   if (!Array.isArray(rawChats)) {
     return [];
   }
   const chats: Chat[] = [];
   for (const raw of rawChats) {
-    const chat = normalizeChat(raw);
+    const chat = normalizeChat(raw, includeLastMessageText);
     if (chat !== undefined) {
       chats.push(chat);
     }

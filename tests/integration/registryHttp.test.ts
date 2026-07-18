@@ -122,6 +122,56 @@ describe('разбор ответа', () => {
   });
 });
 
+describe('CSRF для мутаций (join/leave)', () => {
+  it('{csrf:true} прикладывает X-CSRF-TOKEN из AuthProvider.getCsrfToken', async () => {
+    const { impl, calls } = fakeFetch([{ payload: { status: 'ok', data: { chat_member: {} } } }]);
+    const { client } = createClient(impl);
+
+    await client.call('join_to_thread', { thread_id: 't' }, { csrf: true });
+
+    expect(calls[0]?.headers['X-CSRF-TOKEN']).toBe('fake-csrf-token');
+  });
+
+  it('bad_csrf_token -> перефетч токена (forceRefresh) и один повтор', async () => {
+    const { impl, calls } = fakeFetch([
+      { payload: { status: 'error', data: { code: 'bad_csrf_token', source: 'yamb' } } },
+      { payload: { status: 'ok', data: { chat_member: { role: 'left' } } } },
+    ]);
+    const { client, auth } = createClient(impl);
+
+    const data = await client.call<{ chat_member: unknown }>('leave_thread', { thread_id: 't' }, { csrf: true });
+
+    expect(data).toEqual({ chat_member: { role: 'left' } });
+    /* Первый вызов без force, повтор - с force: токен мог протухнуть, его инвалидируют и перефетчивают */
+    expect(auth.csrfTokenCalls).toEqual([false, true]);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('не зацикливается: повторный bad_csrf_token после перефетча сюрфейсится наверх', async () => {
+    const { impl, calls } = fakeFetch([
+      { payload: { status: 'error', data: { code: 'bad_csrf_token', source: 'yamb' } } },
+    ]);
+    const { client } = createClient(impl);
+
+    await expect(client.call('join_to_thread', { thread_id: 't' }, { csrf: true })).rejects.toMatchObject({
+      name: 'RegistryError',
+      code: 'bad_csrf_token',
+    });
+    expect(calls).toHaveLength(2);
+  });
+
+  it('read-метод с bad_csrf_token НЕ ретраится: CSRF-путь только для помеченных вызовов', async () => {
+    const { impl, calls } = fakeFetch([
+      { payload: { status: 'error', data: { code: 'bad_csrf_token', source: 'yamb' } } },
+    ]);
+    const { client } = createClient(impl);
+
+    await expect(client.call('search', { query: 'x' })).rejects.toMatchObject({ name: 'RegistryError' });
+    /* Без {csrf:true} повтора нет - ровно один вызов */
+    expect(calls).toHaveLength(1);
+  });
+});
+
 describe('протухшая cookie', () => {
   it('HTTP 401 -> onAuthFailure() -> рефреш -> повтор', async () => {
     const { impl, calls } = fakeFetch([

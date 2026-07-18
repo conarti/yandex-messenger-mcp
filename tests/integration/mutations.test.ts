@@ -160,8 +160,8 @@ describe('set_reaction: известный тип уходит одним выз
   });
 });
 
-describe('mark_read: одним вызовом, форма принята живьём (US-009)', () => {
-  it('с message_id: SeenMarker внутри полного конверта, form_status помечен', async () => {
+describe('mark_read: одним вызовом, форма и эффект подтверждены живьём (US-009)', () => {
+  it('с message_id: SeenMarker внутри полного конверта, form_status verified', async () => {
     const result = await markRead(deps, { chat: CHAT_ID, message_id: MESSAGE_ID });
 
     expect(result).toMatchObject({
@@ -169,7 +169,7 @@ describe('mark_read: одним вызовом, форма принята жив
       chat_id: CHAT_ID,
       up_to_message_id: MESSAGE_ID,
       marker: 'SeenMarker',
-      form_status: 'live_accepted_effect_unverified',
+      form_status: 'verified',
     });
     expect(mock.requestsOf('push')[0]?.payload).not.toHaveProperty('SeenMarker');
     const seenMarker = pushClientMessage()['SeenMarker'] as Record<string, unknown>;

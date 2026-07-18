@@ -147,6 +147,20 @@ describe('get_thread: пустой тред = ENTITY_NOT_FOUND, не ошибк�
     expect(result.messages).toEqual([]);
   });
 
+  it('успешный history без сообщений (Messages:[]) -> empty:true, а не false', async () => {
+    /* Регрессия: у родителя has_thread:false, history отвечает ok с пустым чатом - тред всё равно пуст */
+    const { deps } = makeMockDeps({
+      ws: (method) => (method === 'history' ? { Chats: [{ ChatId: THREAD_ID, Messages: [] }] } : {}),
+    });
+
+    const result = await getThread(deps, { thread_id: THREAD_ID });
+
+    if (result.status !== 'ok') throw new Error(`ожидался ok, получен ${result.status}`);
+    expect(result.empty).toBe(true);
+    expect(result.messages).toEqual([]);
+    expect(result.has_more).toBe(false);
+  });
+
   it('прочие ошибки протокола НЕ проглатываются как «пуст»', async () => {
     const { deps } = makeMockDeps({
       ws: (method) => {
@@ -225,7 +239,8 @@ describe('join_to_thread / leave_thread: подписка через HTTP', () =
     const membership = await joinThread(deps.http, THREAD_ID);
 
     expect(membership).toEqual({ chat_member: { role: 'member' } });
-    expect(httpCall).toHaveBeenCalledWith('join_to_thread', { thread_id: THREAD_ID });
+    /* Мутация помечена {csrf:true}: транспорт приложит X-CSRF-TOKEN, иначе bad_csrf_token */
+    expect(httpCall).toHaveBeenCalledWith('join_to_thread', { thread_id: THREAD_ID }, { csrf: true });
   });
 
   it('leave_thread {thread_id} -> {chat_member}', async () => {
@@ -236,7 +251,8 @@ describe('join_to_thread / leave_thread: подписка через HTTP', () =
     const membership = await leaveThread(deps.http, THREAD_ID);
 
     expect(membership).toEqual({ chat_member: { role: 'left' } });
-    expect(httpCall).toHaveBeenCalledWith('leave_thread', { thread_id: THREAD_ID });
+    /* Мутация помечена {csrf:true}: транспорт приложит X-CSRF-TOKEN */
+    expect(httpCall).toHaveBeenCalledWith('leave_thread', { thread_id: THREAD_ID }, { csrf: true });
   });
 });
 

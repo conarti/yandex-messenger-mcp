@@ -90,19 +90,32 @@ describe('normalizeChat', () => {
     expect(chat?.chat_id).toBe('guid-a_guid-b');
   });
 
-  it('Limit:1 -> last_message нормализовано', () => {
-    const chat = normalizeChat(
-      rawChat({
-        Messages: [
-          {
-            ServerMessage: {
-              ClientMessage: { Plain: { ChatId: 'guid-a_guid-b', Text: { MessageText: 'последнее' } } },
-              ServerMessageInfo: { Timestamp: 1784117592261029, SeqNo: 10, From: { Guid: 'guid-b', DisplayName: 'С' } },
-            },
+  const withLastMessage = () =>
+    rawChat({
+      Messages: [
+        {
+          ServerMessage: {
+            ClientMessage: { Plain: { ChatId: 'guid-a_guid-b', Text: { MessageText: 'последнее' } } },
+            ServerMessageInfo: { Timestamp: 1784117592261029, SeqNo: 10, From: { Guid: 'guid-b', DisplayName: 'С' } },
           },
-        ],
-      }),
-    );
+        },
+      ],
+    });
+
+  it('Limit:1 по умолчанию: last_message несёт метаданные, но НЕ текст (приватность)', () => {
+    const chat = normalizeChat(withLastMessage());
+
+    /* Содержимое чужой переписки не утекает в list_chats по дефолту */
+    expect(chat?.last_message?.text).toBeUndefined();
+    expect(chat?.last_message?.attachments).toEqual([]);
+    /* Метаданные на месте: адрес, время, автор, вид */
+    expect(chat?.last_message?.timestamp_mcs).toBe('1784117592261029');
+    expect(chat?.last_message?.from.guid).toBe('guid-b');
+    expect(chat?.last_message?.kind).toBe('text');
+  });
+
+  it('includeLastMessageText: полный текст последнего сообщения по опт-ину', () => {
+    const chat = normalizeChat(withLastMessage(), true);
 
     expect(chat?.last_message?.text).toBe('последнее');
     expect(chat?.last_message?.timestamp_mcs).toBe('1784117592261029');

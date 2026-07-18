@@ -81,6 +81,17 @@ describe('list_chats', () => {
     const result = await listChats(deps);
 
     expect(wsRequest).toHaveBeenCalledWith('history', { Limit: 1, ChatDataFilter: {} });
+    /* Последнее сообщение есть, но по умолчанию БЕЗ текста - метаданные на месте (приватность) */
+    expect(result.chats[0]?.last_message).toBeDefined();
+    expect(result.chats[0]?.last_message?.text).toBeUndefined();
+    expect(result.chats[0]?.last_message?.timestamp_mcs).toBe('1784117592261029');
+  });
+
+  it('include_last_message_text: полный текст последнего сообщения по опт-ину', async () => {
+    const { deps } = makeDeps({ wsRequest: async () => ({ Chats: chats }) });
+
+    const result = await listChats(deps, { include_last_message_text: true });
+
     expect(result.chats[0]?.last_message?.text).toBe('свежее');
   });
 
