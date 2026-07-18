@@ -1,0 +1,111 @@
+{
+  "capturedAt": "2026-07-17T08:38:03.286Z",
+  "diag": {
+    "searchByEntity": [
+      {
+        "entity": "messages",
+        "status": "ok",
+        "dataKeys": [
+          "messages",
+          "warnings"
+        ],
+        "shape": {
+          "total": 0,
+          "limit": 5,
+          "page": 1,
+          "pages": 1,
+          "count": 0
+        }
+      },
+      {
+        "entity": "users",
+        "status": "ok",
+        "dataKeys": [
+          "users",
+          "warnings"
+        ],
+        "shape": {
+          "total": 0,
+          "limit": 5,
+          "page": 1,
+          "pages": 1,
+          "count": 0
+        }
+      },
+      {
+        "entity": "chats",
+        "status": "ok",
+        "dataKeys": [
+          "chats",
+          "warnings"
+        ],
+        "shape": {
+          "total": 0,
+          "limit": 5,
+          "page": 1,
+          "pages": 1,
+          "count": 0
+        }
+      },
+      {
+        "entity": "contacts",
+        "status": "error",
+        "dataKeys": [
+          "code",
+          "text",
+          "source"
+        ],
+        "shape": null
+      }
+    ],
+    "envelope": {
+      "status": "ok",
+      "topKeys": [
+        "status",
+        "data"
+      ],
+      "dataKeys": [
+        "messages",
+        "warnings"
+      ],
+      "messagesKeys": [
+        "items",
+        "total",
+        "limit",
+        "page",
+        "pages"
+      ],
+      "messagesShape": {
+        "total": 0,
+        "limit": 5,
+        "page": 1,
+        "pages": 1,
+        "count": 0
+      },
+      "warnings": {
+        "users": []
+      }
+    },
+    "chatsAvailable": {
+      "status": "ok",
+      "dataKeys": [
+        "chats"
+      ]
+    },
+    "notes": [],
+    "multiEntity": {
+      "status": "ok",
+      "dataKeys": [
+        "messages",
+        "users",
+        "chats",
+        "warnings"
+      ],
+      "totals": {
+        "messages": 0,
+        "users": 0,
+        "chats": 0
+      }
+    }
+  }
+}

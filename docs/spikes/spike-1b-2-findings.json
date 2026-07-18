@@ -1,0 +1,51 @@
+{
+  "capturedAt": "2026-07-17T08:36:46.792Z",
+  "spike1b": {
+    "signPresent": true,
+    "signLen": 32,
+    "tsPresent": true,
+    "tsLooksUnixSec": true,
+    "userIsGuid": true,
+    "sessionFormat": "xxxx-xxxx-xxxx-xxxx",
+    "rpcMethodsSeen": [
+      "request_user",
+      "get_buckets"
+    ],
+    "sourceHits": [
+      {
+        "rpcMethod": "request_user",
+        "urlTail": "registry/api/",
+        "containsSignValue": true,
+        "mentionsSecretSignKey": true
+      }
+    ],
+    "verdict": "SIGN_FROM_HTTP_RESPONSE"
+  },
+  "spike2": {
+    "queriesTried": [
+      {
+        "queryLen": 1,
+        "total": 0
+      },
+      {
+        "queryLen": 2,
+        "total": 0
+      },
+      {
+        "queryLen": 2,
+        "total": 0
+      },
+      {
+        "queryLen": 6,
+        "total": 0
+      },
+      {
+        "queryLen": 3,
+        "total": 0
+      }
+    ],
+    "baseline": null,
+    "candidates": [],
+    "error": "no query produced total>1 (нет данных для проверки пагинации)"
+  }
+}

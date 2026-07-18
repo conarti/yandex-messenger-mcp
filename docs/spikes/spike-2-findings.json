@@ -1,0 +1,124 @@
+{
+  "capturedAt": "2026-07-17T08:46:34.600Z",
+  "spike2LimitSweep": {
+    "sweeps": [
+      {
+        "entity": "users",
+        "reqLimit": 1,
+        "total": 1,
+        "limit": 1,
+        "page": 1,
+        "pages": 1,
+        "count": 1
+      },
+      {
+        "entity": "users",
+        "reqLimit": 2,
+        "total": 2,
+        "limit": 2,
+        "page": 1,
+        "pages": 1,
+        "count": 2
+      },
+      {
+        "entity": "users",
+        "reqLimit": 3,
+        "total": 3,
+        "limit": 3,
+        "page": 1,
+        "pages": 1,
+        "count": 3
+      },
+      {
+        "entity": "users",
+        "reqLimit": 5,
+        "total": 5,
+        "limit": 5,
+        "page": 1,
+        "pages": 1,
+        "count": 5
+      },
+      {
+        "entity": "users",
+        "reqLimit": 10,
+        "total": 7,
+        "limit": 10,
+        "page": 1,
+        "pages": 1,
+        "count": 7
+      },
+      {
+        "entity": "users",
+        "reqLimit": 20,
+        "total": 7,
+        "limit": 20,
+        "page": 1,
+        "pages": 1,
+        "count": 7
+      },
+      {
+        "entity": "users",
+        "reqLimit": 50,
+        "total": 7,
+        "limit": 50,
+        "page": 1,
+        "pages": 1,
+        "count": 7
+      },
+      {
+        "entity": "users",
+        "reqLimit": 100,
+        "total": 7,
+        "limit": 100,
+        "page": 1,
+        "pages": 1,
+        "count": 7
+      }
+    ],
+    "pageParamOnDeepBucket": [
+      {
+        "param": "page",
+        "respPage": 1,
+        "respTotal": 1,
+        "itemChanged": false,
+        "works": false
+      },
+      {
+        "param": "offset",
+        "respPage": 1,
+        "respTotal": 1,
+        "itemChanged": false,
+        "works": false
+      },
+      {
+        "param": "from",
+        "respPage": 1,
+        "respTotal": 1,
+        "itemChanged": false,
+        "works": false
+      },
+      {
+        "param": "skip",
+        "respPage": 1,
+        "respTotal": 1,
+        "itemChanged": false,
+        "works": false
+      },
+      {
+        "param": "page_number",
+        "respPage": 1,
+        "respTotal": 1,
+        "itemChanged": false,
+        "works": false
+      }
+    ],
+    "noLimitParam": {
+      "total": 5,
+      "limit": 5,
+      "page": 1,
+      "pages": 1,
+      "count": 5
+    },
+    "realCountPlateau": 7
+  }
+}
