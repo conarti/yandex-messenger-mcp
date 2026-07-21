@@ -100,17 +100,17 @@ describe('verifyConfirmToken: сверка чата и отпечатка', () =
     ).toThrow(/fingerprint_mismatch/);
   });
 
-  it('fingerprintMismatchReason переопределяет причину (send-путь зовёт её text_mismatch)', () => {
-    const token = encodeToken({ op: 'send', chat_id: CHAT, fingerprint: fingerprint('send', 'x'), payload_id: 'p1' });
+  it('fingerprintMismatchReason переопределяет причину (механизм; send_file зовёт её file_mismatch)', () => {
+    const token = encodeToken({ op: 'send_file', chat_id: CHAT, fingerprint: fingerprint('send_file', 'x'), payload_id: 'p1' });
     expect(() =>
       verifyConfirmToken({
-        op: 'send',
+        op: 'send_file',
         token,
         chatId: CHAT,
-        fingerprint: fingerprint('send', 'y'),
-        fingerprintMismatchReason: 'text_mismatch',
+        fingerprint: fingerprint('send_file', 'y'),
+        fingerprintMismatchReason: 'file_mismatch',
       }),
-    ).toThrow(/text_mismatch/);
+    ).toThrow(/file_mismatch/);
   });
 
   it('токен отсутствует -> token_missing; битый -> token_malformed', () => {

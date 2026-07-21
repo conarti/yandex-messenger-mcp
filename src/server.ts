@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
@@ -14,18 +15,36 @@ import { getMessageContext, DEFAULT_CONTEXT_WINDOW } from './mcp/tools/getMessag
 import { getPoll } from './mcp/tools/getPoll.js';
 import { getThread, DEFAULT_THREAD_LIMIT } from './mcp/tools/getThread.js';
 import { listChats } from './mcp/tools/listChats.js';
+import { listReactions } from './mcp/tools/listReactions.js';
 import { markRead } from './mcp/tools/markRead.js';
 import { pinMessage } from './mcp/tools/pinMessage.js';
+import { DEFAULT_LIST_REACTIONS_LIMIT } from './protocol/reactions.js';
 import { joinThread, leaveThread } from './protocol/threads.js';
 import { search } from './mcp/tools/search.js';
 import { sendFile } from './mcp/tools/sendFile.js';
 import { sendMessage } from './mcp/tools/sendMessage.js';
 import { setReaction } from './mcp/tools/setReaction.js';
 import { voteInPoll } from './mcp/tools/voteInPoll.js';
+import { asObject, stringOr } from './util/json.js';
 import type { Logger } from './util/logger.js';
 
 export const SERVER_NAME = 'yandex-messenger-mcp';
-export const SERVER_VERSION = '0.1.0';
+
+/**
+ * Версия читается из `package.json`, а не дублируется строкой: одно число истины на релиз.
+ *
+ * Путь резолвится от самого модуля, тем же приёмом, что `reactionMap.ts:56-63`: в тестах
+ * (vitest гоняет TS из `src`) это `src/server.ts` -> `../package.json` (корень репозитория);
+ * в проде (`dist`) - `dist/server.js` -> `../package.json`, тот же корень, потому что `tsc`
+ * зеркалит `src` в `dist` один в один (`tsconfig.json`: `rootDir:"src"`, `outDir:"dist"`).
+ */
+function readServerVersion(): string {
+  const packageJsonUrl = new URL('../package.json', import.meta.url);
+  const packageJson = asObject(JSON.parse(readFileSync(packageJsonUrl, 'utf8'))) ?? {};
+  return stringOr(packageJson['version']) ?? '0.0.0';
+}
+
+export const SERVER_VERSION = readServerVersion();
 
 /** Инструменты, которые сервер обязан выставлять */
 export const TOOL_NAMES = [
@@ -34,6 +53,7 @@ export const TOOL_NAMES = [
   'get_message',
   'get_message_context',
   'get_thread',
+  'list_reactions',
   'search',
   'send_message',
   'send_file',
@@ -294,6 +314,39 @@ export function createServer(options: CreateServerOptions): McpServer {
   );
 
   server.registerTool(
+    'list_reactions',
+    {
+      title: 'List reactions and reads',
+      description:
+        'Полный список «кто и когда» по сообщению: реакции (сгруппированы по типу, actors_complete:true - ' +
+        'ВСЕГДА полный список, в отличие от get_history/get_message_context/get_thread, где актёры реакций ' +
+        'могут быть усечённым сиблингом агрегата) и прочтения. Стоит ДВА WS-вызова (UserReactions + ' +
+        'UserReads/Mode:1, §17.12) - дороже сиблингов, зато без обрезки.',
+      inputSchema: {
+        chat: z.string().min(1).describe('ChatId либо поисковый запрос для резолва чата'),
+        message_id: z
+          .string()
+          .regex(/^\d+$/)
+          .describe('Timestamp целевого сообщения в микросекундах (строка)'),
+        limit: z
+          .int()
+          .min(1)
+          .optional()
+          .describe(`Лимит на провод в обоих вызовах (по умолчанию ${DEFAULT_LIST_REACTIONS_LIMIT})`),
+        invite_hash: z.string().min(1).optional().describe('Для чтения по join-ссылке (§17.11)'),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      try {
+        return jsonResult(await listReactions(deps, args));
+      } catch (error) {
+        return errorResult('list_reactions', error, logger);
+      }
+    },
+  );
+
+  server.registerTool(
     'search',
     {
       title: 'Search messenger',
@@ -336,7 +389,34 @@ export function createServer(options: CreateServerOptions): McpServer {
         'поэтому чат и текст на шаге confirm сверяются с подтверждёнными; расхождение отклоняется.',
       inputSchema: {
         chat: z.string().min(1).describe('ChatId либо поисковый запрос для резолва чата'),
-        text: z.string().min(1).describe('Текст сообщения'),
+        text: z.string().min(1).describe('Текст сообщения (упоминания видны человеку как @Имя, guid в текст НЕ подставляются)'),
+        mentions: z
+          .array(z.string().min(1))
+          .optional()
+          .describe(
+            'Упоминания участников. На DRAFT - запросы: @Имя, @<guid> или голый guid; резолвятся ' +
+              'по каталогу организации (неоднозначность отклоняет отправку). На CONFIRM предъявляются ' +
+              'РОВНО те guid, что вернул draft, в том же порядке: изменение состава/порядка отклонит ' +
+              'отправку. Формат guid проверяется при сборке отпечатка; точный адрес гарантирует только guid',
+          ),
+        reply_to_message_id: z
+          .string()
+          .regex(/^\d+$/)
+          .optional()
+          .describe(
+            'Ответить на сообщение: timestamp цели в микросекундах (строка). Цитата перечитывается ' +
+              'с сервера на confirm и показывается в draft (reply_quote); в отпечаток она НЕ входит, ' +
+              'поэтому правка текста цели между draft и confirm отправку не отклоняет. Сам message_id ' +
+              'в отпечаток входит: его изменение между draft и confirm отклонит отправку',
+          ),
+        forward_from: z
+          .string()
+          .regex(/^\d+$/)
+          .optional()
+          .describe(
+            'Переслать сообщение: timestamp пересылаемого в микросекундах (строка). Пересылка без ' +
+              'цитаты (в отличие от reply). Входит в отпечаток: изменение между draft и confirm отклонит отправку',
+          ),
         confirm: z
           .boolean()
           .optional()

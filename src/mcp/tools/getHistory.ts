@@ -113,7 +113,7 @@ export async function getHistory(deps: ToolDeps, input: GetHistoryInput): Promis
    */
   const rawCount = Array.isArray(entry?.Messages) ? entry.Messages.length : 0;
   /* Обогащение аддитивно поверх немутируемого v1-нормализатора (Fork D1): к каждому сообщению
-   * добавляются НОВЫЕ ключи (reads/mentions/reactions_raw/thread/forwarded/from_me), v1-форма цела.
+   * добавляются НОВЫЕ ключи (reads/mentions/reactions/thread/forwarded/from_me), v1-форма цела.
    * reactionMap отрисовывает сырые type в reactions (name/emoji), не роняя выдачу на неизвестном */
   const messages = enrichMessages(entry?.Messages, { myGuid: guid, reactionMap: deps.reactionMap });
 

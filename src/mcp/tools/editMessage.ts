@@ -119,9 +119,26 @@ export async function editMessage(deps: ToolDeps, input: EditMessageInput): Prom
     return remembered;
   }
 
+  /*
+   * Правка пересобирает полный `Plain` заново, поэтому без `MentionedUserIds` она СТЁРЛА БЫ
+   * упоминания цели (AC-7). Читаем текущие упоминания и переотправляем их. Чтение здесь, а не в
+   * токене (P6: токен несёт только отпечаток), и после сверки токена - на расхождении не тратим запрос.
+   */
+  const info = await getMessageInfo(
+    deps.ws,
+    { chatId: draft.chat_id, timestamp: input.message_id },
+    { myGuid: guid, reactionMap: deps.reactionMap },
+  );
+  const mentionedUserIds = info.message.mentions.map((mention) => mention.guid);
+
   const outcome = await pushMutation(
     { ws: deps.ws, auth: deps.auth, serviceId: deps.config.protocol.serviceId },
-    buildEditMutation({ chatId: draft.chat_id, timestamp: input.message_id, text: input.new_text }),
+    buildEditMutation({
+      chatId: draft.chat_id,
+      timestamp: input.message_id,
+      text: input.new_text,
+      ...(mentionedUserIds.length > 0 ? { mentionedUserIds } : {}),
+    }),
   );
 
   const result: EditMessageEdited = {

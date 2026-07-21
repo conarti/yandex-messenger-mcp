@@ -87,6 +87,18 @@ describe('buildEditMutation (§9.3): convertMessageToPlain + Timestamp', () => {
     const plain = (message as unknown as { Plain: { Timestamp: unknown } }).Plain;
     expect(typeof plain.Timestamp).toBe('number');
   });
+
+  it('с упоминаниями отдаёт четвёртый ключ MentionedUserIds; без них - прежние три байт-в-байт (AC-7)', () => {
+    const guids = ['dddddddd-1111-2222-3333-444444444444'];
+    const withMentions = buildEditMutation({ chatId: CHAT, timestamp: TS, text: 'новый', mentionedUserIds: guids });
+    expect(withMentions).toEqual({
+      Plain: { ChatId: CHAT, Timestamp: TS_WIRE, Text: { MessageText: 'новый' }, MentionedUserIds: guids },
+    });
+
+    /* Пустой массив = без упоминаний: правка стёрла бы их, но форма Plain остаётся прежней */
+    const withEmpty = buildEditMutation({ chatId: CHAT, timestamp: TS, text: 'новый', mentionedUserIds: [] });
+    expect(withEmpty).toEqual({ Plain: { ChatId: CHAT, Timestamp: TS_WIRE, Text: { MessageText: 'новый' } } });
+  });
 });
 
 describe('buildVoteMutation (§9.3/§11.4, форма ПОДТВЕРЖДЕНА живьём: 2026-07-17)', () => {

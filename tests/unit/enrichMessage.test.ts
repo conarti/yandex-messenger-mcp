@@ -8,10 +8,14 @@
 import { describe, expect, it } from 'vitest';
 import { enrichMessage, enrichMessages, type EnrichContext } from '../../src/protocol/enrichMessage.js';
 import { normalizeMessage } from '../../src/protocol/messageShape.js';
+import { createReactionMap } from '../../src/config/reactionMap.js';
 
 const TS = 1784117592261029;
 const MY_GUID = 'guid-me';
 const PARTNER_GUID = 'guid-partner';
+
+/** Карта с одним известным типом: проверяем известный (name/emoji) и unknown-путь отрисовки */
+const MAP = createReactionMap(new Map([[100102, { name: 'like-ext', emoji: '👍' }]]));
 
 /** Собирает `ServerMessage`-уровень: тело + `ServerMessageInfo` + любые сиблинги сверху */
 function serverMessage(overrides: {
@@ -48,7 +52,7 @@ function enrich(raw: Record<string, unknown>, ctx?: Partial<EnrichContext>) {
   if (base === undefined) {
     throw new Error('фикстура должна нормализоваться');
   }
-  return enrichMessage(base, { myGuid: MY_GUID, siblings: raw, ...ctx });
+  return enrichMessage(base, { myGuid: MY_GUID, reactionMap: MAP, siblings: raw, ...ctx });
 }
 
 describe('golden: v1-объект = структурное подмножество v2-выхода', () => {
@@ -83,7 +87,9 @@ describe('golden: v1-объект = структурное подмножест�
     /* И появились новые top-level ключи */
     expect(enriched).toHaveProperty('reads');
     expect(enriched).toHaveProperty('mentions');
-    expect(enriched).toHaveProperty('reactions_raw');
+    /* Единая форма реакций (ось B1): reactions обязателен, разнесённого reactions_raw больше нет */
+    expect(enriched).toHaveProperty('reactions');
+    expect(enriched).not.toHaveProperty('reactions_raw');
     expect(enriched).toHaveProperty('thread');
     expect(enriched).toHaveProperty('forwarded');
     expect(enriched).toHaveProperty('from_me');
@@ -111,8 +117,9 @@ describe('reads (§11.2): отслеживается / не отслеживае
 
     expect(enriched.reads.tracked).toBe(true);
     expect(enriched.reads.count).toBe(2);
+    /* Вложенная форма (ось E1): актор отдельным ключом, метка на уровне receipt */
     expect(enriched.reads.recent).toEqual([
-      { guid: 'guid-reader', name: 'Читатель', timestamp: '2026-07-15T12:03:20.000Z', timestamp_mcs: '1784117000000000' },
+      { actor: { guid: 'guid-reader', name: 'Читатель' }, timestamp: '2026-07-15T12:03:20.000Z', timestamp_mcs: '1784117000000000' },
     ]);
     /* Метка строкой, не float */
     expect(enriched.reads.seen_by_partner_mcs).toBe('1784117000000000');
@@ -230,8 +237,8 @@ describe('thread (§9.1): признак треда + корень', () => {
   });
 });
 
-describe('reactions_raw (§17.12): int type всегда, без emoji/name', () => {
-  it('Reactions[] -> items с int type и count; RecentUserReactions -> recent', () => {
+describe('reactions (ось B1): единая форма, сгруппирована по типу, акторы + actors_complete', () => {
+  it('Reactions[] джойнятся с RecentUserReactions по типу; известный отрисован картой, unknown виден', () => {
     const enriched = enrich(
       serverMessage({
         siblings: {
@@ -244,25 +251,74 @@ describe('reactions_raw (§17.12): int type всегда, без emoji/name', ()
       }),
     );
 
-    expect(enriched.reactions_raw.items).toEqual([
-      { type: 100102, count: 3 },
-      { type: 999999, count: 1 },
+    expect(enriched.reactions).toEqual([
+      {
+        type: 100102,
+        name: 'like-ext',
+        emoji: '👍',
+        count: 3,
+        /* Актор несёт метку внутри (ось E1) */
+        actors: [{ guid: 'guid-fan', name: 'Фанат', timestamp: '2026-07-15T12:03:20.000Z', timestamp_mcs: '1784117000000000' }],
+        /* count 3 > 1 актора -> список усечён */
+        actors_complete: false,
+      },
+      {
+        type: 999999,
+        name: null,
+        emoji: null,
+        unknown: true,
+        count: 1,
+        actors: [],
+        /* count 1 > 0 акторов -> усечён */
+        actors_complete: false,
+      },
     ]);
     /* type - число (id артворка), не emoji и не кодпоинт */
-    expect(enriched.reactions_raw.items.every((item) => typeof item.type === 'number')).toBe(true);
-    expect(enriched.reactions_raw.recent).toEqual([
-      { type: 100102, guid: 'guid-fan', name: 'Фанат', timestamp: '2026-07-15T12:03:20.000Z', timestamp_mcs: '1784117000000000' },
-    ]);
+    expect(enriched.reactions.every((reaction) => typeof reaction.type === 'number')).toBe(true);
   });
 
-  it('неизвестный тип 999999 не роняет обогащение, отдаётся сырым type', () => {
+  it('неизвестный тип 999999 не роняет обогащение, отдаётся сырым type с unknown', () => {
     const enriched = enrich(serverMessage({ siblings: { Reactions: [{ Type: 999999, Count: 1 }] } }));
 
-    expect(enriched.reactions_raw.items[0]?.type).toBe(999999);
+    expect(enriched.reactions[0]?.type).toBe(999999);
+    expect(enriched.reactions[0]?.unknown).toBe(true);
   });
 
-  it('реакций нет -> пустые items и recent', () => {
-    expect(enrich(serverMessage({})).reactions_raw).toEqual({ items: [], recent: [] });
+  it('actors_complete:false, когда count больше числа акторов этого типа', () => {
+    const enriched = enrich(
+      serverMessage({
+        siblings: {
+          Reactions: [{ Type: 100102, Count: 3 }],
+          RecentUserReactions: [{ UserInfo: { Guid: 'guid-fan' }, Type: 100102, Timestamp: 1784117000000000 }],
+        },
+      }),
+    );
+
+    expect(enriched.reactions[0]?.count).toBe(3);
+    expect(enriched.reactions[0]?.actors).toHaveLength(1);
+    expect(enriched.reactions[0]?.actors_complete).toBe(false);
+  });
+
+  it('actors_complete:true, когда count сходится с числом акторов', () => {
+    const enriched = enrich(
+      serverMessage({
+        siblings: {
+          Reactions: [{ Type: 100102, Count: 2 }],
+          RecentUserReactions: [
+            { UserInfo: { Guid: 'guid-a' }, Type: 100102, Timestamp: 1784117000000000 },
+            { UserInfo: { Guid: 'guid-b' }, Type: 100102, Timestamp: 1784117000000000 },
+          ],
+        },
+      }),
+    );
+
+    expect(enriched.reactions[0]?.count).toBe(2);
+    expect(enriched.reactions[0]?.actors).toHaveLength(2);
+    expect(enriched.reactions[0]?.actors_complete).toBe(true);
+  });
+
+  it('реакций нет -> пустой массив', () => {
+    expect(enrich(serverMessage({})).reactions).toEqual([]);
   });
 });
 
@@ -295,7 +351,7 @@ describe('enrichMessages: разворот Messages[] + обогащение', (
         { ServerMessage: { ClientMessage: {} } },
         { Meta: { Origin: 27 } },
       ],
-      { myGuid: MY_GUID },
+      { myGuid: MY_GUID, reactionMap: MAP },
     );
 
     expect(messages).toHaveLength(1);
@@ -305,6 +361,6 @@ describe('enrichMessages: разворот Messages[] + обогащение', (
   });
 
   it('на не-массиве отдаёт пусто, а не падает', () => {
-    expect(enrichMessages(undefined, { myGuid: MY_GUID })).toEqual([]);
+    expect(enrichMessages(undefined, { myGuid: MY_GUID, reactionMap: MAP })).toEqual([]);
   });
 });

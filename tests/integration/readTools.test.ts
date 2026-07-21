@@ -269,19 +269,15 @@ describe('get_history', () => {
     const result = await getHistory(deps, { chat: CHAT_ID, limit: 40 });
 
     if (result.status !== 'ok') throw new Error('ожидался ok');
-    /* Известный тип - с name/emoji из карты; неизвестный - unknown, но не потерян */
+    /* Единая форма (ось B1): известный тип - с name/emoji; неизвестный - unknown, но не потерян.
+     * Акторов в сиблингах нет -> actors:[], а count>0 -> actors_complete:false */
     expect(result.messages[0]?.reactions).toEqual([
-      { type: 100102, name: 'like-ext', emoji: '👍', count: 3 },
-      { type: 999999, name: null, emoji: null, unknown: true, count: 1 },
+      { type: 100102, name: 'like-ext', emoji: '👍', count: 3, actors: [], actors_complete: false },
+      { type: 999999, name: null, emoji: null, unknown: true, count: 1, actors: [], actors_complete: false },
     ]);
     /* Count сходится: сумма показанного = сумме сырого Reactions[].Count */
     const shown = (result.messages[0]?.reactions ?? []).reduce((sum, r) => sum + (r.count ?? 0), 0);
     expect(shown).toBe(4);
-    /* Сырой reactions_raw тоже на месте (Phase 1 не сломан) */
-    expect(result.messages[0]?.reactions_raw.items).toEqual([
-      { type: 100102, count: 3 },
-      { type: 999999, count: 1 },
-    ]);
   });
 
   it('query с несколькими совпадениями -> кандидаты, история НЕ запрашивается', async () => {

@@ -4,8 +4,14 @@
  * ПОЧЕМУ ОТДЕЛЬНАЯ ФУНКЦИЯ, А НЕ ПРАВКА `normalizeMessage`. Выход v1-нормализатора
  * (`messageShape.ts`) заморожен байт-в-байт: на его форму завязана регрессия v1
  * (`toEqual` в `messageShape.test.ts`). Обогащение приезжает НОВОЙ функцией поверх
- * немутируемого `base` и добавляет ТОЛЬКО НОВЫЕ top-level ключи. Так «v1-объект =
- * структурное подмножество v2-выхода» держится структурно, а не дисциплиной.
+ * немутируемого `base` и добавляет top-level ключи. ИНВАРИАНТ: v1-объект (`Message`) остаётся
+ * структурным подмножеством выхода - каждый v1-ключ на месте с тем же значением.
+ *
+ * ГРАНИЦА ИНВАРИАНТА (P1, P5). Подмножество гарантируется ТОЛЬКО для v1-ключей `Message`. Слой
+ * обогащения (reactions/reads/mentions/thread/forwarded/from_me) - это v2-контракт, и он НЕ
+ * append-only между своими версиями: `reactions_raw` удалён, `reactions` сведён к единой форме
+ * (`Reaction` по типу) до публикации - ломающая правка внутри окна P5. Поэтому «прошлый v2-выход
+ * ⊆ нынешний» неверно; честнее говорить не «подмножество», а «v1-ключи сохранены, v2-слой пересобран».
  *
  * ИСТОЧНИК ДАННЫХ - СИБЛИНГИ. Прочтения, реакции, упоминания, форварды и корень треда
  * лежат СИБЛИНГАМИ `ClientMessage` на уровне `ServerMessage` (§11.2), а не внутри тела;
@@ -25,17 +31,10 @@
  */
 import type { AttachmentRef } from './attachmentRefs.js';
 import { normalizeMessage, type Message, type MessageSender } from './messageShape.js';
+import type { Reaction, ReactionActor, ReadReceipt } from './reactions.js';
 import { asObject, numberOr, stringOr } from '../util/json.js';
 import { microsToIso, parseMicros } from '../util/timestamps.js';
-import { renderReactions, type ReactionMap, type RenderedReaction } from '../config/reactionMap.js';
-
-/** Прочтение конкретным пользователем (сиблинг `RecentUserReads`, §11.2) */
-export interface ReadReceipt {
-  guid?: string;
-  name?: string;
-  timestamp?: string;
-  timestamp_mcs?: string;
-}
+import { renderReactions, type ReactionMap } from '../config/reactionMap.js';
 
 /**
  * Прочтения сообщения. Отсутствие сиблингов прочтений = «не отслеживается»
@@ -54,31 +53,6 @@ export interface MentionRef {
   guid: string;
   name?: string;
   unresolved?: boolean;
-}
-
-/**
- * Сырая реакция. `type` - int (id артворка, §17.12), присутствует ВСЕГДА.
- * Отрисовка в emoji/name по карте приходит в Phase 2 - здесь только сырой тип.
- */
-export interface RawReaction {
-  type: number;
-  count?: number;
-}
-
-/** Сырая реакция конкретного пользователя (сиблинг `RecentUserReactions`, §11.2) */
-export interface RecentReaction {
-  type: number;
-  guid?: string;
-  name?: string;
-  timestamp?: string;
-  timestamp_mcs?: string;
-}
-
-export interface ReactionsRaw {
-  /** Агрегаты из `Reactions[]` */
-  items: RawReaction[];
-  /** Пофамильные из `RecentUserReactions[]` */
-  recent: RecentReaction[];
 }
 
 /** Признак «есть тред» + корень (`ThreadState`/`ThreadParentMessage`, §9.1) */
@@ -107,12 +81,12 @@ export interface EnrichedMessage extends Message {
   from_me: boolean | null;
   reads: MessageReads;
   mentions: MentionRef[];
-  reactions_raw: ReactionsRaw;
   /**
-   * Финальная форма реакций через карту (Phase 2): `{type, name, emoji, count?, unknown?}`.
-   * Присутствует, только когда в `ctx` передан `reactionMap`; иначе доступен лишь `reactions_raw`.
+   * Единая форма реакций (ось B1): `Reaction` сгруппированы по типу, name/emoji отрисованы картой,
+   * акторы и `actors_complete` из усечённых сиблингов history. Поле ОБЯЗАТЕЛЬНО (пустой массив,
+   * если реакций нет) - `reactions_raw` снят, разнесённой сырой формы больше нет.
    */
-  reactions?: RenderedReaction[];
+  reactions: Reaction[];
   thread: ThreadInfo;
   forwarded: ForwardedOriginal[];
 }
@@ -120,10 +94,11 @@ export interface EnrichedMessage extends Message {
 export interface EnrichContext {
   myGuid: string;
   /**
-   * Карта реакций (Phase 2). Если передана, сырые `type` из `reactions_raw.items`
-   * отрисовываются в `reactions` (name/emoji/unknown); без неё поле `reactions` не появляется.
+   * Карта реакций. ОБЯЗАТЕЛЬНА: `reactions` собирается всегда, и без карты сырые `type` не
+   * отрисовать в name/emoji (карту нельзя загрузить внутри чистой функции - это I/O). Все четыре
+   * read-инструмента прокидывают `deps.reactionMap`, поэтому обязательность не сужает вызов.
    */
-  reactionMap?: ReactionMap;
+  reactionMap: ReactionMap;
   /** Сырой `ServerMessage`-уровень: то, что `normalizeMessage` отбросил */
   siblings: unknown;
 }
@@ -192,7 +167,8 @@ function buildReads(siblings: Record<string, unknown>): MessageReads {
     if (user === undefined && mark === undefined) {
       continue;
     }
-    recent.push({ ...userReceipt(user), ...(mark !== undefined ? mark : {}) });
+    /* Вложенная форма (ось E1): актор отдельным ключом, метка прочтения - на уровне receipt */
+    recent.push({ actor: userReceipt(user), ...(mark !== undefined ? mark : {}) });
   }
 
   const seenMcs = numberOr(siblings['SeenByPartnerMcs']);
@@ -251,9 +227,17 @@ function buildMentions(siblings: Record<string, unknown>): MentionRef[] {
   return mentions;
 }
 
-function buildReactionsRaw(siblings: Record<string, unknown>): ReactionsRaw {
+/**
+ * Единая форма реакций (ось B1): агрегаты `Reactions[]` джойнятся с пофамильными
+ * `RecentUserReactions[]` по типу, отрисовываются картой (`renderReactions`), к каждому типу
+ * прикладываются акторы и вычисляется `actors_complete`. Ноль дополнительных запросов - это
+ * джойн двух массивов ОДНОГО ответа, чистая функция без I/O (§17.12, AC-15).
+ */
+function buildReactions(siblings: Record<string, unknown>, map: ReactionMap): Reaction[] {
+  /* Агрегаты `Reactions[]` -> сырые {type, count}; порядок сохраняется, дубли типа схлопываются */
+  const aggregates: { type: number; count?: number }[] = [];
+  const indexByType = new Map<number, number>();
   const rawItems = Array.isArray(siblings['Reactions']) ? siblings['Reactions'] : [];
-  const items: RawReaction[] = [];
   for (const raw of rawItems) {
     const obj = asObject(raw);
     if (obj === undefined) {
@@ -261,15 +245,17 @@ function buildReactionsRaw(siblings: Record<string, unknown>): ReactionsRaw {
     }
     /* Тип - int (§17.12). Без числового типа реакция неадресуема - не тащим мусор */
     const type = numberOr(obj['Type']);
-    if (type === undefined) {
+    if (type === undefined || indexByType.has(type)) {
       continue;
     }
     const count = numberOr(obj['Count']);
-    items.push({ type, ...(count !== undefined ? { count } : {}) });
+    indexByType.set(type, aggregates.length);
+    aggregates.push({ type, ...(count !== undefined ? { count } : {}) });
   }
 
+  /* Пофамильные акторы `RecentUserReactions[]`, сгруппированы по типу */
+  const actorsByType = new Map<number, ReactionActor[]>();
   const rawRecent = Array.isArray(siblings['RecentUserReactions']) ? siblings['RecentUserReactions'] : [];
-  const recent: RecentReaction[] = [];
   for (const raw of rawRecent) {
     const obj = asObject(raw);
     if (obj === undefined) {
@@ -281,10 +267,34 @@ function buildReactionsRaw(siblings: Record<string, unknown>): ReactionsRaw {
     }
     const user = userRef(obj['UserInfo']);
     const mark = microsMark(obj['Timestamp']);
-    recent.push({ type, ...userReceipt(user), ...(mark !== undefined ? mark : {}) });
+    const actor: ReactionActor = { ...userReceipt(user), ...(mark !== undefined ? mark : {}) };
+    let bucket = actorsByType.get(type);
+    if (bucket === undefined) {
+      bucket = [];
+      actorsByType.set(type, bucket);
+      /* Тип есть в recent, но не в агрегатах - дотягиваем в хвост, чтобы актора не потерять */
+      if (!indexByType.has(type)) {
+        indexByType.set(type, aggregates.length);
+        aggregates.push({ type });
+      }
+    }
+    bucket.push(actor);
   }
 
-  return { items, recent };
+  /* Отрисовка через карту: type -> name/emoji/count; неизвестный виден как unknown, не проглатывается */
+  return renderReactions(aggregates, map).map((info) => {
+    const actors = actorsByType.get(info.type) ?? [];
+    /*
+     * actors_complete: сравнение `count` (из `Reactions[].Count`) с числом акторов этого типа в recent.
+     * `count === undefined` (агрегата нет, сравнивать не с чем) трактуется как `true`: неполноту не
+     * заявляем без доказательства, и это согласуется с `list_reactions`, где список всегда полный.
+     * ГРЕЙД (P1): механизм усечения ПОДТВЕРЖДЁН живьём для `RecentUserReads` (§17.12, `reactions.ts`),
+     * для `RecentUserReactions` срабатывание НЕ наблюдалось. Вычисление корректно независимо от
+     * наблюдения - это сравнение двух чисел из ОДНОГО ответа, а не вывод о поведении сервера.
+     */
+    const actorsComplete = info.count === undefined || actors.length >= info.count;
+    return { ...info, actors, actors_complete: actorsComplete };
+  });
 }
 
 function buildThread(siblings: Record<string, unknown>): ThreadInfo {
@@ -331,7 +341,6 @@ function buildForwarded(siblings: Record<string, unknown>): ForwardedOriginal[] 
 export function enrichMessage(base: Message, ctx: EnrichContext): EnrichedMessage {
   const siblings = asObject(ctx.siblings) ?? {};
   const fromGuid = base.from.guid;
-  const reactionsRaw = buildReactionsRaw(siblings);
 
   return {
     ...base,
@@ -339,12 +348,8 @@ export function enrichMessage(base: Message, ctx: EnrichContext): EnrichedMessag
     from_me: fromGuid.length === 0 ? null : fromGuid === ctx.myGuid,
     reads: buildReads(siblings),
     mentions: buildMentions(siblings),
-    reactions_raw: reactionsRaw,
-    /* Карта передана -> отрисовываем сырые type в name/emoji; неизвестный виден как unknown,
-     * Count сходится (отрисовываются все элементы). Без карты остаётся только reactions_raw */
-    ...(ctx.reactionMap !== undefined
-      ? { reactions: renderReactions(reactionsRaw.items, ctx.reactionMap) }
-      : {}),
+    /* Единая форма: агрегаты + акторы + actors_complete, отрисовано картой. Неизвестный тип виден как unknown */
+    reactions: buildReactions(siblings, ctx.reactionMap),
     thread: buildThread(siblings),
     forwarded: buildForwarded(siblings),
   };

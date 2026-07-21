@@ -122,7 +122,7 @@ describe('get_message по chat_id + message_id', () => {
     if (result.status !== 'ok') throw new Error('ожидался ok');
     const listCalls = wsRequest.mock.calls.filter(([m]) => m === 'list_reactions');
     expect(listCalls).toHaveLength(2);
-    expect(result.reactions_detail?.reactions[0]?.reaction.name).toBe('like-ext');
+    expect(result.reactions_detail?.reactions[0]?.name).toBe('like-ext');
     expect(result.reactions_detail?.reads.recent).toHaveLength(1);
   });
 

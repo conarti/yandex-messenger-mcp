@@ -99,8 +99,10 @@ export interface VerifyConfirmInput {
   /** ЗАНОВО посчитанный отпечаток нагрузки (через `fingerprint(op, ...)`) */
   fingerprint: string;
   /**
-   * Причина расхождения отпечатка. send-путь исторически зовёт её `text_mismatch`
-   * (отпечаток = хэш текста); прочим операциям подходит дефолт `fingerprint_mismatch`.
+   * Причина расхождения отпечатка. По умолчанию `fingerprint_mismatch`. Механизм override
+   * остаётся в API и используется send_file-путём (`file_mismatch`, отпечаток считается по
+   * описанию файла). send-путь override НЕ задаёт: после расширения отпечатка на упоминания и
+   * цель reply историческое имя причины стало бы ложным (расхождение состава отчиталось бы как текст).
    */
   fingerprintMismatchReason?: string;
 }

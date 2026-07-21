@@ -109,16 +109,22 @@ describe('listReactions: два вызова, Mode-дискриминатор, L
 
     const detail = await listReactions(client, { chatId: CHAT_ID, timestamp: TS }, MAP);
 
+    /* Сгруппировано по типу (ось B1/E1): описатель типа напрямую, актор с меткой внутри */
     expect(detail.reactions).toEqual([
       {
-        actor: { guid: 'guid-fan', name: 'Фанат' },
-        reaction: { type: 100102, name: 'like-ext', emoji: '👍' },
-        timestamp: '2026-07-17T11:16:40.000Z',
-        timestamp_mcs: '1784287000000000',
+        type: 100102,
+        name: 'like-ext',
+        emoji: '👍',
+        count: 1,
+        actors: [
+          { guid: 'guid-fan', name: 'Фанат', timestamp: '2026-07-17T11:16:40.000Z', timestamp_mcs: '1784287000000000' },
+        ],
+        /* Детальная выборка - полный список: всегда true */
+        actors_complete: true,
       },
     ]);
     /* Метка строкой, не float */
-    expect(typeof detail.reactions[0]?.timestamp_mcs).toBe('string');
+    expect(typeof detail.reactions[0]?.actors[0]?.timestamp_mcs).toBe('string');
   });
 
   it('неизвестный тип в UserReactions виден как unknown, выборка не падает', async () => {
@@ -129,7 +135,16 @@ describe('listReactions: два вызова, Mode-дискриминатор, L
 
     const detail = await listReactions(client, { chatId: CHAT_ID, timestamp: TS }, MAP);
 
-    expect(detail.reactions[0]?.reaction).toEqual({ type: 999999, name: null, emoji: null, unknown: true });
+    /* Неизвестный тип виден как unknown прямо на реакции, актор сохранён */
+    expect(detail.reactions[0]).toEqual({
+      type: 999999,
+      name: null,
+      emoji: null,
+      unknown: true,
+      count: 1,
+      actors: [{ guid: 'guid-x', timestamp: '2026-07-17T11:16:40.000Z', timestamp_mcs: '1784287000000000' }],
+      actors_complete: true,
+    });
   });
 
   it('Mode:1 -> UserReads + ReadsCount: кто и когда прочитал, count из ReadsCount', async () => {
