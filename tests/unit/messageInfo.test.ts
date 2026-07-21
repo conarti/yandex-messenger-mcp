@@ -84,7 +84,10 @@ describe('getMessageInfo: одно сообщение без истории', ()
       Message: serverMessage({ Reactions: [{ Type: 100102, Count: 2 }] }),
     });
     const result = await getMessageInfo(client, { chatId: CHAT_ID, timestamp: TS_STR }, ctx);
-    expect(result.message.reactions).toEqual([{ type: 100102, name: 'like-ext', emoji: '👍', count: 2 }]);
+    /* Единая форма (ось B1): count из Reactions[].Count, акторов в сиблингах нет -> усечён */
+    expect(result.message.reactions).toEqual([
+      { type: 100102, name: 'like-ext', emoji: '👍', count: 2, actors: [], actors_complete: false },
+    ]);
   });
 });
 

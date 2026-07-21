@@ -47,24 +47,39 @@ export interface ListReactionsInput {
   inviteHash?: string;
 }
 
-/** Кто поставил реакцию / прочитал. Guid может быть срезан - поля опциональны */
+/**
+ * Актор реакции: кто поставил и когда. ОБЩИЙ тип по всей публичной поверхности (ось E1) -
+ * им наполняются `Reaction.actors[]` и здесь, и в `enrichMessage`. Guid может быть срезан,
+ * поэтому поля опциональны. У read-акторов (`ReadReceipt.actor`) заполнены только `guid`/`name`:
+ * метка прочтения живёт на уровне самого receipt, а не внутри актора.
+ */
 export interface ReactionActor {
   guid?: string;
   name?: string;
-}
-
-/** Реакция конкретного пользователя (`UserReactions[]`, §17.12): кто, что, когда */
-export interface UserReactionEntry {
-  actor: ReactionActor;
-  reaction: ReactionInfo;
-  /** Когда поставлена (ISO), если пришло */
+  /** Когда поставлена реакция (ISO), если пришло */
   timestamp?: string;
   /** То же в мкс строкой (не float) */
   timestamp_mcs?: string;
 }
 
-/** Прочтение конкретного пользователя (`UserReads[]`, §17.12): кто и когда */
-export interface UserReadEntry {
+/**
+ * Реакция, сгруппированная ПО ТИПУ (ось B1): описатель типа (`ReactionInfo`) + агрегат + акторы.
+ * Единая форма реакции по всей поверхности - и в history-обогащении, и в детальной выборке.
+ */
+export interface Reaction extends ReactionInfo {
+  /** Сколько поставивших: из `Reactions[].Count` в history, из длины полного списка - в детальной выборке */
+  count?: number;
+  /** Кто поставил (и когда). В детальной выборке - полный список; в history - усечённый сиблинг */
+  actors: ReactionActor[];
+  /**
+   * `actors[]` содержит ВСЕХ поставивших этот тип. В детальной выборке всегда `true` (полный список
+   * двумя вызовами). В history-обогащении вычисляется сравнением `count` с числом акторов.
+   */
+  actors_complete: boolean;
+}
+
+/** Прочтение конкретным пользователем (`UserReads[]`, §17.12): кто и когда. Вложенная форма (ось E1) */
+export interface ReadReceipt {
   actor: ReactionActor;
   timestamp?: string;
   timestamp_mcs?: string;
@@ -77,12 +92,12 @@ export interface UserReadEntry {
 export interface ReadState {
   tracked: boolean;
   count?: number;
-  recent: UserReadEntry[];
+  recent: ReadReceipt[];
 }
 
-/** Итог двух вызовов: детальные реакции (кто/что/когда) + прочтения (кто/когда) */
+/** Итог двух вызовов: детальные реакции (сгруппированы по типу) + прочтения (кто/когда) */
 export interface MessageReactionsDetail {
-  reactions: UserReactionEntry[];
+  reactions: Reaction[];
   reads: ReadState;
 }
 
@@ -158,9 +173,11 @@ function markOf(raw: unknown): { timestamp: string; timestamp_mcs: string } | un
   }
 }
 
-function parseUserReactions(response: ListReactionsResponse, map: ReactionMap): UserReactionEntry[] {
+function parseUserReactions(response: ListReactionsResponse, map: ReactionMap): Reaction[] {
   const raw = Array.isArray(response.UserReactions) ? response.UserReactions : [];
-  const entries: UserReactionEntry[] = [];
+  /* Группируем пофамильные реакции по типу; порядок групп - по первому появлению типа */
+  const actorsByType = new Map<number, ReactionActor[]>();
+  const order: number[] = [];
   for (const item of raw) {
     const obj = asObject(item);
     if (obj === undefined) {
@@ -172,13 +189,20 @@ function parseUserReactions(response: ListReactionsResponse, map: ReactionMap): 
       continue;
     }
     const mark = markOf(obj['Timestamp']);
-    entries.push({
-      actor: actorOf(obj['UserInfo']),
-      reaction: map.lookup(type),
-      ...(mark !== undefined ? mark : {}),
-    });
+    const actor: ReactionActor = { ...actorOf(obj['UserInfo']), ...(mark !== undefined ? mark : {}) };
+    let bucket = actorsByType.get(type);
+    if (bucket === undefined) {
+      bucket = [];
+      actorsByType.set(type, bucket);
+      order.push(type);
+    }
+    bucket.push(actor);
   }
-  return entries;
+  /* Детальная выборка - ПОЛНЫЙ список (§17.12): count = число акторов, actors_complete всегда true */
+  return order.map((type) => {
+    const actors = actorsByType.get(type) ?? [];
+    return { ...map.lookup(type), count: actors.length, actors, actors_complete: true };
+  });
 }
 
 function parseUserReads(response: ListReactionsResponse): ReadState {
@@ -190,7 +214,7 @@ function parseUserReads(response: ListReactionsResponse): ReadState {
 
   const count = numberOr(response.ReadsCount);
   const raw = Array.isArray(response.UserReads) ? response.UserReads : [];
-  const recent: UserReadEntry[] = [];
+  const recent: ReadReceipt[] = [];
   for (const item of raw) {
     const obj = asObject(item);
     if (obj === undefined) {
