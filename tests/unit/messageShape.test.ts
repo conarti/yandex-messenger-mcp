@@ -175,6 +175,97 @@ describe('рефы вложений (§11.1/§12.4)', () => {
   });
 });
 
+describe('text из content-типов (§11.1, ревизия всех CONTENT_KINDS - AC-9..AC-12)', () => {
+  it('Text.MessageText -> text', () => {
+    const message = normalizeMessage(serverMessage({ plain: { Text: { MessageText: 'обычный текст' } } }));
+
+    expect(message?.kind).toBe('text');
+    expect(message?.text).toBe('обычный текст');
+  });
+
+  it('Sticker не несёт текстового поля на проводе - text отсутствует', () => {
+    const message = normalizeMessage(
+      serverMessage({ plain: { Text: undefined, Sticker: { StickerId: 'sticker-1' } } }),
+    );
+
+    expect(message?.kind).toBe('sticker');
+    expect(message?.text).toBeUndefined();
+  });
+
+  it('Image не несёт текстового поля на проводе - text отсутствует', () => {
+    const message = normalizeMessage(
+      serverMessage({ plain: { Text: undefined, Image: { FileInfo: { Id2: 'doc-1', Source: 0 } } } }),
+    );
+
+    expect(message?.kind).toBe('image');
+    expect(message?.text).toBeUndefined();
+  });
+
+  it('MiscFile не несёт текстового поля на проводе - text отсутствует', () => {
+    const message = normalizeMessage(
+      serverMessage({ plain: { Text: undefined, MiscFile: { FileInfo: { Id2: 'doc-2', Source: 0 } } } }),
+    );
+
+    expect(message?.kind).toBe('file');
+    expect(message?.text).toBeUndefined();
+  });
+
+  it('Card сознательно не читается (AC-11) - text отсутствует, даже если поля похожи на текстовые', () => {
+    const message = normalizeMessage(
+      serverMessage({
+        plain: { Text: undefined, Card: { Title: 'заголовок карточки', Description: 'описание карточки' } },
+      }),
+    );
+
+    expect(message?.kind).toBe('card');
+    expect(message?.text).toBeUndefined();
+  });
+
+  it('Gallery.Text -> непустой text: картинка с подписью не теряет текст (AC-9)', () => {
+    const message = normalizeMessage(
+      serverMessage({
+        plain: {
+          Text: undefined,
+          Gallery: { Items: [{ Image: { FileInfo: { Id2: 'doc-3', Source: 0 } } }], Text: 'подпись к галерее' },
+        },
+      }),
+    );
+
+    expect(message?.kind).toBe('gallery');
+    expect(message?.text).toBe('подпись к галерее');
+  });
+
+  it('Gallery без Text - text отсутствует, а не пустая строка', () => {
+    const message = normalizeMessage(
+      serverMessage({
+        plain: { Text: undefined, Gallery: { Items: [{ Image: { FileInfo: { Id2: 'doc-4', Source: 0 } } }] } },
+      }),
+    );
+
+    expect(message?.text).toBeUndefined();
+  });
+
+  it('Voice.Text -> распознанная речь в text', () => {
+    const message = normalizeMessage(
+      serverMessage({
+        plain: { Text: undefined, Voice: { FileInfo: { Id2: 'doc-5', Source: 0 }, Text: 'расшифровка речи' } },
+      }),
+    );
+
+    expect(message?.kind).toBe('voice');
+    expect(message?.text).toBe('расшифровка речи');
+  });
+
+  it('Poll.Title НЕ подставляется в text (AC-12): заголовок отдаётся через get_poll', () => {
+    const message = normalizeMessage(
+      serverMessage({ plain: { Text: undefined, Poll: { Title: 'вопрос опроса', Answers: ['да', 'нет'] } } }),
+    );
+
+    expect(message?.kind).toBe('poll');
+    expect(message?.text).toBeUndefined();
+  });
+});
+
 describe('контекст reply/forward (§11.1: reply = форвард с цитатой)', () => {
   it('ForwardedMessageRefs + Quote => is_reply с цитатой и ссылкой', () => {
     const message = normalizeMessage(

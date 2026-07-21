@@ -166,7 +166,24 @@ export function normalizeMessage(serverMessage: unknown): Message | undefined {
   const edited = typeof lastEdit === 'number' && lastEdit > 0;
   const deleted = info['Deleted'] === true;
 
-  const text = stringOr(asObject(body?.['Text'])?.['MessageText']) ?? stringOr(asObject(body?.['Voice'])?.['Text']);
+  /**
+   * Текст собирается из content-полей, которые его реально несут - ревизия всех восьми
+   * `CONTENT_KINDS` (AC-10):
+   * - `Text.MessageText` - обычный текст;
+   * - `Voice.Text` - распознанная речь;
+   * - `Gallery.Text` - подпись к галерее (AC-9), тот же ключ, что и у обычного текста;
+   * - `Sticker`, `Image`, `MiscFile` текстового поля на проводе не несут вовсе - на них лежит
+   *   только `FileInfo` (§11.1, `attachmentRefs.ts`) - терять здесь нечего;
+   * - `Card`, вероятно, содержательно несёт текст, но его форма ни разу не наблюдалась
+   *   живьём, и он СОЗНАТЕЛЬНО не поддерживается (AC-11): читать из невалидированной формы
+   *   значит рисковать вернуть не то поле под видом текста;
+   * - `Poll.Title` намеренно НЕ подставляется (AC-12) - заголовок уже отдаётся отдельно,
+   *   через `get_poll` (`poll.ts:185`), дублирование развело бы источники правды.
+   */
+  const text =
+    stringOr(asObject(body?.['Text'])?.['MessageText']) ??
+    stringOr(asObject(body?.['Voice'])?.['Text']) ??
+    stringOr(asObject(body?.['Gallery'])?.['Text']);
   const context = body !== undefined ? buildContext(body) : undefined;
   const chatId = stringOr(body?.['ChatId']);
 
