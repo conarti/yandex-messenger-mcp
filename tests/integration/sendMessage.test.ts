@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FakeAuthProvider } from '../../src/auth/FakeAuthProvider.js';
 import { loadConfig } from '../../src/config/loadConfig.js';
+import { loadReactionMap } from '../../src/config/reactionMap.js';
 import type { ToolDeps } from '../../src/mcp/tools/deps.js';
 import {
   resetSentTokens,
@@ -26,10 +27,16 @@ const MY_GUID = 'aaaaaaaa-1111-2222-3333-444444444444';
 const PARTNER_GUID = 'bbbbbbbb-5555-6666-7777-888888888888';
 const CHAT_ID = `${PARTNER_GUID}_${MY_GUID}`;
 const OTHER_CHAT_ID = `cccccccc-9999-0000-1111-222222222222_${MY_GUID}`;
+const MENTION_GUID_A = 'dddddddd-1111-2222-3333-444444444444';
+const MENTION_GUID_B = 'eeeeeeee-5555-6666-7777-888888888888';
 const TEXT = 'mcp selftest';
 
 const config = loadConfig({ configDir: mkdtempSync(join(tmpdir(), 'ymm-send-')) });
 const logger = createLogger({ level: 'error' });
+const reactionMap = loadReactionMap();
+
+/* 16 цифр, < 2^53: метка цели reply в том же чате */
+const REPLY_TARGET_ID = '1784117592261029';
 
 /** Бакет chats: один точный кандидат -> резолв без неоднозначности */
 function chatsHit(chatId: string, name: string) {
@@ -49,12 +56,31 @@ function makeDeps(searchResult: unknown = chatsHit(CHAT_ID, 'Коллега')): 
     auth: new FakeAuthProvider({ context: { userGuid: MY_GUID } }),
     config,
     logger,
+    reactionMap,
   } as unknown as ToolDeps;
 }
 
 /** Отвечает на push заданным commit-статусом */
 function pushRespondsWith(payload: Record<string, unknown>): void {
   mock.responders.set('push', (request, connection) => mock.reply(connection, request, payload));
+}
+
+/** message_info-ответ: цель reply в CHAT_ID с заданным текстом (draft/confirm перечитывают им цитату) */
+function messageInfoResponds(text: string): void {
+  mock.responders.set('message_info', (request, connection) =>
+    mock.reply(connection, request, {
+      Message: {
+        ClientMessage: { Plain: { ChatId: CHAT_ID, Text: { MessageText: text } } },
+        ServerMessageInfo: {
+          Timestamp: Number(REPLY_TARGET_ID),
+          SeqNo: 5,
+          LastEditTimestamp: 0,
+          Deleted: false,
+          From: { Guid: PARTNER_GUID, DisplayName: 'Коллега' },
+        },
+      },
+    }),
+  );
 }
 
 async function draft(input: { chat?: string; text?: string } = {}): Promise<SendMessageDraft> {
@@ -209,7 +235,7 @@ describe('confirm: ре-верификация (отправка необрат�
 
     await expect(
       sendMessage(deps, { chat: 'Коллега', text: `${TEXT} и кое-что ещё`, confirm: true, confirm_token }),
-    ).rejects.toThrow(/text_mismatch/);
+    ).rejects.toThrow(/fingerprint_mismatch/);
     expect(mock.requestsOf('push')).toHaveLength(0);
   });
 
@@ -262,6 +288,212 @@ describe('готовность соединения (§17.2)', () => {
     await expect(sendMessage(deps, { chat: 'Коллега', text: TEXT, confirm: true, confirm_token })).rejects.toThrow(
       /subscribed/,
     );
+    expect(mock.requestsOf('push')).toHaveLength(0);
+  });
+});
+
+describe('упоминания: резолв только на draft (ось D1, §6.4)', () => {
+  /** Комбинированный ответ поиска: чат-бакет для resolveChat, users-бакет для resolveMention */
+  function userBucket(items: unknown[]) {
+    return { users: { items, total: items.length, limit: 50 } };
+  }
+
+  it('неоднозначное @Имя -> ambiguous_mention, ни резолва «на удачу», ни push', async () => {
+    deps = makeDeps({
+      chats: { items: [{ data: { chat_id: CHAT_ID, name: 'Коллега' } }], total: 1, limit: 50 },
+      users: {
+        items: [
+          { data: { guid: MENTION_GUID_A, display_name: 'Иван П.' } },
+          { data: { guid: MENTION_GUID_B, display_name: 'Иван С.' } },
+        ],
+        total: 2,
+        limit: 50,
+      },
+    });
+
+    const result = await sendMessage(deps, { chat: 'Коллега', text: 'привет @Иван', mentions: ['Иван'] });
+
+    expect(result.status).toBe('ambiguous_mention');
+    if (result.status !== 'ambiguous_mention') throw new Error('ожидался ambiguous_mention');
+    expect(result.query).toBe('Иван');
+    expect(result.candidates.map((candidate) => candidate.guid)).toEqual([MENTION_GUID_A, MENTION_GUID_B]);
+    /* Неоднозначность блокирует отправку: ни одного push-кадра сокет не видел */
+    expect(mock.requestsOf('push')).toHaveLength(0);
+  });
+
+  it('draft резолвит @Имя и всегда несёт mentions [{guid, name}]', async () => {
+    deps = makeDeps(userBucket([{ data: { guid: PARTNER_GUID, display_name: 'Иван' } }]));
+
+    const result = await sendMessage(deps, { chat: CHAT_ID, text: 'привет @Иван', mentions: ['Иван'] });
+
+    expect(result.status).toBe('draft');
+    if (result.status !== 'draft') throw new Error('ожидался draft');
+    expect(result.mentions).toEqual([{ guid: PARTNER_GUID, name: 'Иван' }]);
+    expect(mock.requestsOf('push')).toHaveLength(0);
+  });
+
+  it('без упоминаний draft несёт пустой массив mentions (поле присутствует всегда)', async () => {
+    deps = makeDeps(userBucket([]));
+
+    const result = await sendMessage(deps, { chat: CHAT_ID, text: TEXT });
+
+    expect(result.status).toBe('draft');
+    if (result.status !== 'draft') throw new Error('ожидался draft');
+    expect(result.mentions).toEqual([]);
+  });
+
+  it('confirm БЕЗ предъявленных mentions -> fingerprint_mismatch; резолв на confirm не вызывается', async () => {
+    deps = makeDeps(userBucket([{ data: { guid: PARTNER_GUID, display_name: 'Иван' } }]));
+    const draftResult = await sendMessage(deps, { chat: CHAT_ID, text: 'привет @Иван', mentions: ['Иван'] });
+    if (draftResult.status !== 'draft') throw new Error('ожидался draft');
+    /* Литеральный ChatId не ищется, поэтому единственный http-вызов - резолв упоминания на draft */
+    const httpCallsAfterDraft = httpCall.mock.calls.length;
+
+    await expect(
+      sendMessage(deps, { chat: CHAT_ID, text: 'привет @Иван', confirm: true, confirm_token: draftResult.confirm_token }),
+    ).rejects.toThrow(/fingerprint_mismatch/);
+    /* confirm не резолвит упоминания: мок поиска не тронут ни разу сверх draft */
+    expect(httpCall.mock.calls.length).toBe(httpCallsAfterDraft);
+    expect(mock.requestsOf('push')).toHaveLength(0);
+  });
+
+  it('confirm с предъявленными guid отправляет MentionedUserIds, повторного резолва нет', async () => {
+    await ws.connect();
+    deps = makeDeps(userBucket([{ data: { guid: PARTNER_GUID, display_name: 'Иван' } }]));
+    const draftResult = await sendMessage(deps, { chat: CHAT_ID, text: 'привет @Иван', mentions: ['Иван'] });
+    if (draftResult.status !== 'draft') throw new Error('ожидался draft');
+    const guids = draftResult.mentions.map((mention) => mention.guid);
+    const httpCallsAfterDraft = httpCall.mock.calls.length;
+
+    const result = (await sendMessage(deps, {
+      chat: CHAT_ID,
+      text: 'привет @Иван',
+      mentions: guids,
+      confirm: true,
+      confirm_token: draftResult.confirm_token,
+    })) as SendMessageSent;
+
+    expect(result.status).toBe('sent');
+    /* confirm принимает guid литералами и не ищет: ни одного нового http-вызова */
+    expect(httpCall.mock.calls.length).toBe(httpCallsAfterDraft);
+    const frames = mock.requestsOf('push');
+    expect(frames).toHaveLength(1);
+    const plain = (frames[0]?.payload['ClientMessage'] as { Plain: Record<string, unknown> }).Plain;
+    expect(plain).toMatchObject({ ChatId: CHAT_ID, Text: { MessageText: 'привет @Иван' }, MentionedUserIds: guids });
+  });
+
+  it('confirm с guid не в формате -> malformed_guid до отпечатка, push не уходит', async () => {
+    deps = makeDeps(userBucket([{ data: { guid: PARTNER_GUID, display_name: 'Иван' } }]));
+    const draftResult = await sendMessage(deps, { chat: CHAT_ID, text: 'привет @Иван', mentions: ['Иван'] });
+    if (draftResult.status !== 'draft') throw new Error('ожидался draft');
+
+    await expect(
+      sendMessage(deps, {
+        chat: CHAT_ID,
+        text: 'привет @Иван',
+        mentions: ['не-валидный-guid'],
+        confirm: true,
+        confirm_token: draftResult.confirm_token,
+      }),
+    ).rejects.toThrow(/malformed_guid/);
+    expect(mock.requestsOf('push')).toHaveLength(0);
+  });
+});
+
+describe('reply: цитата с сервера, вне отпечатка (ось D, §6.2, AC-4/AC-5)', () => {
+  it('draft: перечитывает цель и показывает цитату из ответа сервера, push не уходит', async () => {
+    messageInfoResponds('исходное сообщение собеседника');
+
+    const result = await sendMessage(deps, {
+      chat: CHAT_ID,
+      text: 'мой ответ',
+      reply_to_message_id: REPLY_TARGET_ID,
+    });
+
+    expect(result.status).toBe('draft');
+    if (result.status !== 'draft') throw new Error('ожидался draft');
+    expect(result.reply_quote).toBe('исходное сообщение собеседника');
+    expect(result.quote_truncated).toBe(false);
+    /* Один WS-read цели, ни одного push */
+    expect(mock.requestsOf('message_info')).toHaveLength(1);
+    expect(mock.requestsOf('push')).toHaveLength(0);
+  });
+
+  it('draft: цитата длиннее 200 обрезается, quote_truncated виден', async () => {
+    messageInfoResponds('я'.repeat(250));
+
+    const result = await sendMessage(deps, { chat: CHAT_ID, text: 'ответ', reply_to_message_id: REPLY_TARGET_ID });
+
+    if (result.status !== 'draft') throw new Error('ожидался draft');
+    expect(result.quote_truncated).toBe(true);
+    expect(result.reply_quote).toBe('я'.repeat(200) + '…');
+  });
+
+  it('confirm: собирает Quote из ОТВЕТА СЕРВЕРА (не из ввода), ref+quote в push-кадре', async () => {
+    await ws.connect();
+    messageInfoResponds('слова собеседника');
+    const draftResult = await sendMessage(deps, { chat: CHAT_ID, text: 'мой ответ', reply_to_message_id: REPLY_TARGET_ID });
+    if (draftResult.status !== 'draft') throw new Error('ожидался draft');
+
+    const result = (await sendMessage(deps, {
+      chat: CHAT_ID,
+      text: 'мой ответ',
+      reply_to_message_id: REPLY_TARGET_ID,
+      confirm: true,
+      confirm_token: draftResult.confirm_token,
+    })) as SendMessageSent;
+
+    expect(result.status).toBe('sent');
+    const frames = mock.requestsOf('push');
+    expect(frames).toHaveLength(1);
+    const plain = (frames[0]?.payload['ClientMessage'] as { Plain: Record<string, unknown> }).Plain;
+    expect(plain).toMatchObject({
+      ChatId: CHAT_ID,
+      Text: { MessageText: 'мой ответ' },
+      ForwardedMessageRefs: [{ ChatId: CHAT_ID, Timestamp: Number(REPLY_TARGET_ID) }],
+      ForwardedMessageStyles: [{ Quote: 'слова собеседника' }],
+    });
+  });
+
+  it('правка ТЕКСТА цели между draft и confirm НЕ отвергает отправку (цитата вне отпечатка §6.2)', async () => {
+    await ws.connect();
+    messageInfoResponds('старый текст цели');
+    const draftResult = await sendMessage(deps, { chat: CHAT_ID, text: 'мой ответ', reply_to_message_id: REPLY_TARGET_ID });
+    if (draftResult.status !== 'draft') throw new Error('ожидался draft');
+    expect(draftResult.reply_quote).toBe('старый текст цели');
+
+    /* Цель отредактирована: сервер отдаёт НОВЫЙ текст. Цитата в отпечаток не входит -> отправка проходит */
+    messageInfoResponds('НОВЫЙ текст цели после правки');
+
+    const result = (await sendMessage(deps, {
+      chat: CHAT_ID,
+      text: 'мой ответ',
+      reply_to_message_id: REPLY_TARGET_ID,
+      confirm: true,
+      confirm_token: draftResult.confirm_token,
+    })) as SendMessageSent;
+
+    expect(result.status).toBe('sent');
+    const plain = (mock.requestsOf('push')[0]?.payload['ClientMessage'] as { Plain: Record<string, unknown> }).Plain;
+    /* Quote собрана из НОВОГО ответа сервера на confirm, а не из draft */
+    expect(plain).toMatchObject({ ForwardedMessageStyles: [{ Quote: 'НОВЫЙ текст цели после правки' }] });
+  });
+
+  it('смена reply_to_message_id между draft и confirm ОТВЕРГАЕТ (входит в отпечаток §6.1)', async () => {
+    await ws.connect();
+    messageInfoResponds('текст цели');
+    const draftResult = await sendMessage(deps, { chat: CHAT_ID, text: 'мой ответ', reply_to_message_id: REPLY_TARGET_ID });
+    if (draftResult.status !== 'draft') throw new Error('ожидался draft');
+
+    await expect(
+      sendMessage(deps, {
+        chat: CHAT_ID,
+        text: 'мой ответ',
+        reply_to_message_id: '1784117592261030',
+        confirm: true,
+        confirm_token: draftResult.confirm_token,
+      }),
+    ).rejects.toThrow(/fingerprint_mismatch/);
     expect(mock.requestsOf('push')).toHaveLength(0);
   });
 });

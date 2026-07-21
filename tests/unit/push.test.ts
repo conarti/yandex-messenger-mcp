@@ -8,6 +8,8 @@ import {
   createPayloadId,
   parsePushResponse,
   PushNotCommittedError,
+  QUOTE_MAX_LENGTH,
+  truncateQuote,
 } from '../../src/protocol/push.js';
 
 const SUBSCRIPTION_ID = 'a'.repeat(40);
@@ -59,6 +61,97 @@ describe('buildPushParams (§14.4)', () => {
 
   it('PayloadId уникален на драфт: он же ключ серверной дедупликации (§11.1)', () => {
     expect(createPayloadId()).not.toBe(createPayloadId());
+  });
+});
+
+describe('buildPlainTextClientMessage: MentionedUserIds (AC-1)', () => {
+  const GUIDS = ['dddddddd-1111-2222-3333-444444444444', 'eeeeeeee-5555-6666-7777-888888888888'];
+
+  it('кладёт MentionedUserIds при непустом массиве, порядок сохранён', () => {
+    const message = buildPlainTextClientMessage({
+      chatId: 'aaaa_bbbb',
+      text: 'привет @Иван @Пётр',
+      payloadId: 'p1',
+      mentionedUserIds: GUIDS,
+    });
+
+    expect(message).toEqual({
+      Plain: { ChatId: 'aaaa_bbbb', PayloadId: 'p1', Text: { MessageText: 'привет @Иван @Пётр' }, MentionedUserIds: GUIDS },
+    });
+  });
+
+  it('НЕ кладёт ключ MentionedUserIds без упоминаний (пустой массив и отсутствие поля - одна форма)', () => {
+    const withEmpty = buildPlainTextClientMessage({ chatId: 'aaaa_bbbb', text: 'привет', payloadId: 'p1', mentionedUserIds: [] });
+    const withUndefined = buildPlainTextClientMessage({ chatId: 'aaaa_bbbb', text: 'привет', payloadId: 'p1' });
+
+    expect(withEmpty['Plain'] as Record<string, unknown>).not.toHaveProperty('MentionedUserIds');
+    expect(withUndefined['Plain'] as Record<string, unknown>).not.toHaveProperty('MentionedUserIds');
+    expect(withEmpty).toEqual(withUndefined);
+  });
+});
+
+describe('buildPlainTextClientMessage: reply/forward (AC-4, AC-5, AC-6)', () => {
+  const REF_CHAT = 'aaaa_bbbb';
+  /* 16 цифр, < 2^53: укладывается в number без потери точности */
+  const REF_TS = '1784117592261029';
+
+  it('reply: ForwardedMessageRefs + ForwardedMessageStyles.Quote, метка ссылки уходит числом', () => {
+    const message = buildPlainTextClientMessage({
+      chatId: REF_CHAT,
+      text: 'мой ответ',
+      payloadId: 'p1',
+      forwardedRefs: [{ chatId: REF_CHAT, timestamp: REF_TS }],
+      quote: 'исходное сообщение собеседника',
+    });
+
+    expect(message).toEqual({
+      Plain: {
+        ChatId: REF_CHAT,
+        PayloadId: 'p1',
+        Text: { MessageText: 'мой ответ' },
+        ForwardedMessageRefs: [{ ChatId: REF_CHAT, Timestamp: 1784117592261029 }],
+        ForwardedMessageStyles: [{ Quote: 'исходное сообщение собеседника' }],
+      },
+    });
+  });
+
+  it('forward: те же ForwardedMessageRefs, но БЕЗ ForwardedMessageStyles (нет Quote)', () => {
+    const message = buildPlainTextClientMessage({
+      chatId: REF_CHAT,
+      text: 'пересылаю',
+      payloadId: 'p1',
+      forwardedRefs: [{ chatId: REF_CHAT, timestamp: REF_TS }],
+    });
+
+    const plain = message['Plain'] as Record<string, unknown>;
+    expect(plain).toHaveProperty('ForwardedMessageRefs', [{ ChatId: REF_CHAT, Timestamp: 1784117592261029 }]);
+    expect(plain).not.toHaveProperty('ForwardedMessageStyles');
+  });
+
+  it('без reply/forward ключей ссылок нет вовсе (пустой массив и отсутствие поля - одна форма)', () => {
+    const withEmpty = buildPlainTextClientMessage({ chatId: REF_CHAT, text: 't', payloadId: 'p1', forwardedRefs: [] });
+    const withUndefined = buildPlainTextClientMessage({ chatId: REF_CHAT, text: 't', payloadId: 'p1' });
+
+    expect(withEmpty['Plain'] as Record<string, unknown>).not.toHaveProperty('ForwardedMessageRefs');
+    expect(withEmpty).toEqual(withUndefined);
+  });
+});
+
+describe('truncateQuote: обрезка цитаты на 200 (§6.2, длина ВЫВЕДЕНА - P1)', () => {
+  it('константа обрезки - 200', () => {
+    expect(QUOTE_MAX_LENGTH).toBe(200);
+  });
+
+  it('цитата <= 200 символов не обрезается, факт обрезки false', () => {
+    const text = 'a'.repeat(QUOTE_MAX_LENGTH);
+    expect(truncateQuote(text)).toEqual({ quote: text, truncated: false });
+  });
+
+  it('цитата > 200 обрезается до 200 с многоточием, факт обрезки виден', () => {
+    const result = truncateQuote('b'.repeat(250));
+
+    expect(result.truncated).toBe(true);
+    expect(result.quote).toBe('b'.repeat(QUOTE_MAX_LENGTH) + '…');
   });
 });
 

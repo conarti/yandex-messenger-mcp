@@ -23,7 +23,7 @@
 import { randomUUID } from 'node:crypto';
 import { codeName, PushCommitStatus } from '../transport/ws/frameTypes.js';
 import { asObject, numberOr } from '../util/json.js';
-import { parseMicros } from '../util/timestamps.js';
+import { parseMicros, toWireTimestamp } from '../util/timestamps.js';
 import { mapPushCommitStatus, MessengerError } from './errors.js';
 
 /**
@@ -42,11 +42,58 @@ const CLIENT_SUPPORTED_FEATURES = 0;
 /** Commit-статусы, которые означают «сообщение принято» и повторной отправки НЕ требуют */
 const COMMITTED_STATUSES: readonly number[] = [PushCommitStatus.FULLY_COMMITTED, PushCommitStatus.DUPLICATE];
 
+/**
+ * Ссылка на процитированное/пересланное сообщение (`ForwardedMessageRefs[]`, §11.1).
+ * `Timestamp` уходит на провод ЧИСЛОМ, как все целевые метки мутаций (`mutations.ts:12-19`):
+ * строка на этом месте даёт `BACKEND_CALL_ERROR`.
+ */
+export interface ForwardedMessageRefInput {
+  chatId: string;
+  /** Метка цитируемого/пересылаемого сообщения (мкс, строка) */
+  timestamp: string;
+}
+
 export interface PlainTextInput {
   chatId: string;
   text: string;
   /** Client-side id сообщения (§11.1). Он же ключ серверной дедупликации */
   payloadId: string;
+  /**
+   * guid упомянутых участников (`MentionedUserIds`, §11.1). Наблюдено на ВХОДЯЩИХ
+   * (`enrichMessage.ts:217-226`), на исходящем ДОКО-ВЫВЕДЕНО (P1): live round-trip - шаг 1
+   * (L3). `MessageText` уходит как набран, guid едут отдельным полем - человек их не видит.
+   */
+  mentionedUserIds?: string[];
+  /**
+   * Ссылки reply/forward (`ForwardedMessageRefs`, §11.1). Наблюдено на ВХОДЯЩИХ
+   * (`messageShape.ts:77-115`); исходящая форма ДОКО-ВЫВЕДЕНА (P1): live round-trip - шаг 2 (L4).
+   */
+  forwardedRefs?: ForwardedMessageRefInput[];
+  /**
+   * Цитата ответа (`ForwardedMessageStyles.Quote`, §11.1). Наличие Quote отличает reply (С Quote)
+   * от forward (БЕЗ Quote), см. `messageShape.ts:46-52`. Приходит С СЕРВЕРА на confirm, никогда из
+   * ввода вызывающего: иначе можно было бы приписать собеседнику несказанное (§6.2). Обрезается
+   * до `QUOTE_MAX_LENGTH` вызывающим (`truncateQuote`). Исходящая форма ДОКО-ВЫВЕДЕНА (P1).
+   */
+  quote?: string;
+}
+
+/**
+ * Длина обрезки цитаты reply. ВЫВЕДЕНО, не наблюдено (P1): ни в коде, ни в протоколе значения
+ * нет, живой веб-клиент не измерялся. Идёт в таблицу границ доверия README; правится одной
+ * константой.
+ */
+export const QUOTE_MAX_LENGTH = 200;
+
+/**
+ * Обрезает цитату до `QUOTE_MAX_LENGTH`, добавляя многоточие, и сообщает факт обрезки (§6.2).
+ * Факт обрезки виден вызывающему как `quote_truncated` в draft-превью.
+ */
+export function truncateQuote(text: string): { quote: string; truncated: boolean } {
+  if (text.length <= QUOTE_MAX_LENGTH) {
+    return { quote: text, truncated: false };
+  }
+  return { quote: text.slice(0, QUOTE_MAX_LENGTH) + '…', truncated: true };
 }
 
 /**
@@ -57,13 +104,35 @@ export function createPayloadId(): string {
   return randomUUID();
 }
 
-/** Вариант `ClientMessage` для отправки текста: content-поле ровно одно - `Text` (§11.1) */
+/**
+ * Вариант `ClientMessage` для отправки текста: content-поле ровно одно - `Text` (§11.1).
+ *
+ * Reply и forward - ОДНА форма Plain, различает лишь наличие `Quote` (`messageShape.ts:46-52`):
+ * reply несёт `ForwardedMessageStyles.Quote`, forward - те же `ForwardedMessageRefs` без него.
+ * ⚠️ ФОРМА ИСХОДЯЩЕГО ПУТИ ДЛЯ reply/forward ДОКО-ВЫВЕДЕНА (P1): входящие наблюдались
+ * (`messageShape.ts:77-115`), отправка - нет; собирается симметрично, live round-trip - шаг 2 (L4).
+ */
 export function buildPlainTextClientMessage(input: PlainTextInput): Record<string, unknown> {
   return {
     Plain: {
       ChatId: input.chatId,
       PayloadId: input.payloadId,
       Text: { MessageText: input.text },
+      /* `MentionedUserIds` кладём только при непустом массиве: пустой ключ - лишний мусор на проводе */
+      ...(input.mentionedUserIds !== undefined && input.mentionedUserIds.length > 0
+        ? { MentionedUserIds: input.mentionedUserIds }
+        : {}),
+      /* Ссылки reply/forward: метка цели уходит числом (`mutations.ts:12-19`), только при непустом массиве */
+      ...(input.forwardedRefs !== undefined && input.forwardedRefs.length > 0
+        ? {
+            ForwardedMessageRefs: input.forwardedRefs.map((ref) => ({
+              ChatId: ref.chatId,
+              Timestamp: toWireTimestamp(parseMicros(ref.timestamp)),
+            })),
+          }
+        : {}),
+      /* Quote отличает reply от forward: forward цитаты не несёт, поэтому ключ появляется только у reply */
+      ...(input.quote !== undefined ? { ForwardedMessageStyles: [{ Quote: input.quote }] } : {}),
     },
   };
 }

@@ -61,6 +61,7 @@ const READ_ONLY_TOOLS = [
   'get_message',
   'get_message_context',
   'get_thread',
+  'list_reactions',
   'search',
   'get_poll',
 ] as const;

@@ -160,6 +160,11 @@ export interface EditMutationInput {
   timestamp: string;
   /** Новый текст */
   text: string;
+  /**
+   * guid упомянутых (`MentionedUserIds`, §11.1). Правка пересобирает полный `Plain` заново,
+   * поэтому без этого поля она СТЁРЛА БЫ упоминания, проставленные при отправке (AC-7).
+   */
+  mentionedUserIds?: string[];
 }
 
 /**
@@ -177,6 +182,10 @@ export function buildEditMutation(input: EditMutationInput): MutationClientMessa
       ChatId: input.chatId,
       Timestamp: toWireTimestamp(parseMicros(input.timestamp)),
       Text: { MessageText: input.text },
+      /* Без упоминаний - прежние три ключа байт-в-байт; с ними - четвёртый (AC-7) */
+      ...(input.mentionedUserIds !== undefined && input.mentionedUserIds.length > 0
+        ? { MentionedUserIds: input.mentionedUserIds }
+        : {}),
     },
   });
 }
