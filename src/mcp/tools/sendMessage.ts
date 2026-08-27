@@ -20,6 +20,7 @@
  * наружу уходят кандидаты, и ни один push при этом не отправляется.
  */
 import { resolveChat, type ChatCandidate } from '../../chat/resolveChat.js';
+import { buildChatResolveFailure, type ChatResolveFailure } from '../../chat/resolveFailure.js';
 import { resolveMention, type MentionCandidate } from '../../chat/resolveMention.js';
 import {
   ConfirmRejectedError,
@@ -105,7 +106,7 @@ export type SendMessageResult =
   | SendMessageDraft
   | SendMessageSent
   | { status: 'ambiguous_chat'; candidates: ChatCandidate[] }
-  | { status: 'chat_not_found'; query: string }
+  | ChatResolveFailure
   /* `query` несёт КАКОЕ ИМЕННО @X не разрешилось: упоминаний может быть несколько (§6.4) */
   | { status: 'ambiguous_mention'; query: string; candidates: MentionCandidate[] }
   | { status: 'mention_not_in_chat'; query: string; guid: string; chat_id: string }
@@ -264,7 +265,7 @@ export async function sendMessage(deps: ToolDeps, input: SendMessageInput): Prom
     return { status: 'ambiguous_chat', candidates: resolved.candidates };
   }
   if (resolved.status === 'not_found') {
-    return { status: 'chat_not_found', query: input.chat };
+    return buildChatResolveFailure({ query: input.chat, reason: 'name_not_found' });
   }
 
   if (input.confirm !== true) {

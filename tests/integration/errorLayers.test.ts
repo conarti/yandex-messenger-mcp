@@ -182,6 +182,25 @@ describe('слой 3: push commit-status', () => {
     expect(parsePushResponse(response)).toMatchObject({ status: 8, committed: true, duplicate: true });
   });
 
+  /*
+   * Отсечка транспорта: ответы на `push` короткозамыкаются ДО маппинга слоя 2, поэтому
+   * прикладной код 4 на этом пути не рождается вовсе. Это и есть основание не ставить в
+   * push-путь перехват `ENTITY_NOT_FOUND` из #18: ловить там нечего, а `Status:4` в ответе
+   * на push - это commit-статус NO_SUCH_CHAT, сущность другого слоя.
+   */
+  it('Status:4 на push резолвится payload-ом, а не поднимает MessengerError', async () => {
+    mock.responders.set('push', (request, connection) => {
+      mock.reply(connection, request, { Status: 4, Details: 'no such chat' });
+    });
+
+    const subscriptionId = await client.waitForSubscriptionId();
+    const response = await client.request('push', {}, { requireSubscriptionId: subscriptionId });
+
+    expect(response).toMatchObject({ Status: 4, Details: 'no such chat' });
+    expect(response).not.toBeInstanceOf(MessengerError);
+    expect(parsePushResponse(response)).toMatchObject({ status: 4, committed: false });
+  });
+
   it.each([
     [4, 'NO_SUCH_CHAT'],
     [7, 'SENDER_NOT_IN_CHAT'],

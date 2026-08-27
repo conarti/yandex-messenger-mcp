@@ -13,6 +13,11 @@
  * Вложения отдаются РЕФАМИ. Ничего не качается - это делает download_attachment (Phase 6).
  */
 import { resolveChat, type ChatCandidate } from '../../chat/resolveChat.js';
+import {
+  buildChatResolveFailure,
+  requestChatAddressed,
+  type ChatResolveFailure,
+} from '../../chat/resolveFailure.js';
 import { enrichMessages, type EnrichedMessage } from '../../protocol/enrichMessage.js';
 import { buildHistoryParams, findChatEntry, type HistoryResponse } from '../../protocol/history.js';
 import { includeDownTo, isoToMicros, parseMicros } from '../../util/timestamps.js';
@@ -50,7 +55,7 @@ export type GetHistoryResult =
       has_more: boolean;
     }
   | { status: 'ambiguous_chat'; candidates: ChatCandidate[] }
-  | { status: 'chat_not_found'; query: string };
+  | ChatResolveFailure;
 
 export const DEFAULT_HISTORY_LIMIT = 40;
 
@@ -68,7 +73,7 @@ export async function getHistory(deps: ToolDeps, input: GetHistoryInput): Promis
     return { status: 'ambiguous_chat', candidates: resolved.candidates };
   }
   if (resolved.status === 'not_found') {
-    return { status: 'chat_not_found', query: input.chat };
+    return buildChatResolveFailure({ query: input.chat, reason: 'name_not_found' });
   }
 
   /*
@@ -94,17 +99,29 @@ export async function getHistory(deps: ToolDeps, input: GetHistoryInput): Promis
         ? includeDownTo(isoToMicros(input.from_date))
         : undefined;
 
-  const response = await deps.ws.request<HistoryResponse>(
-    'history',
-    buildHistoryParams({
-      chatId: resolved.chat_id,
-      limit,
-      ...(maxTimestamp !== undefined ? { maxTimestamp } : {}),
-      ...(minTimestamp !== undefined ? { minTimestamp } : {}),
-    }),
+  /*
+   * У `history` адресуемая сущность ровно одна - чат: временны́е границы задают диапазон, а
+   * метка, за которой ничего нет, даёт пустую страницу, а не отказ (живая проба 2026-08-28).
+   * Поэтому `ENTITY_NOT_FOUND(4)` тут может быть только про чат.
+   */
+  const page = await requestChatAddressed(
+    { addresses: 'chat_only', query: input.chat, resolved },
+    () =>
+      deps.ws.request<HistoryResponse>(
+        'history',
+        buildHistoryParams({
+          chatId: resolved.chat_id,
+          limit,
+          ...(maxTimestamp !== undefined ? { maxTimestamp } : {}),
+          ...(minTimestamp !== undefined ? { minTimestamp } : {}),
+        }),
+      ),
   );
+  if (!page.ok) {
+    return page.failure;
+  }
 
-  const entry = findChatEntry(response, resolved.chat_id) as { Messages?: unknown } | undefined;
+  const entry = findChatEntry(page.value, resolved.chat_id) as { Messages?: unknown } | undefined;
   /*
    * has_more считается по СЫРОЙ длине, а не по нормализованной: normalizeMessages
    * выбрасывает неадресуемые элементы (без парсящегося Timestamp), поэтому полная

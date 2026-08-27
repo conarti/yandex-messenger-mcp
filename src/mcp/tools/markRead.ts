@@ -24,6 +24,11 @@
  * метку самого свежего сообщения. Это по-прежнему ОДИН вызов инструмента, без confirm.
  */
 import { resolveChat, type ChatCandidate } from '../../chat/resolveChat.js';
+import {
+  buildChatResolveFailure,
+  requestChatAddressed,
+  type ChatResolveFailure,
+} from '../../chat/resolveFailure.js';
 import { enrichMessages } from '../../protocol/enrichMessage.js';
 import { buildHistoryParams, findChatEntry, type HistoryResponse } from '../../protocol/history.js';
 import { buildReadMarkerMutation, pushMutation } from '../../protocol/mutations.js';
@@ -57,7 +62,7 @@ export type MarkReadResult =
     }
   | { status: 'empty_chat'; chat_id: string }
   | { status: 'ambiguous_chat'; candidates: ChatCandidate[] }
-  | { status: 'chat_not_found'; query: string };
+  | ChatResolveFailure;
 
 /** Страница истории, чтобы взять самую свежую метку, когда message_id не задан */
 const NEWEST_PAGE_LIMIT = 1;
@@ -74,17 +79,28 @@ export async function markRead(deps: ToolDeps, input: MarkReadInput): Promise<Ma
     return { status: 'ambiguous_chat', candidates: resolved.candidates };
   }
   if (resolved.status === 'not_found') {
-    return { status: 'chat_not_found', query: input.chat };
+    return buildChatResolveFailure({ query: input.chat, reason: 'name_not_found' });
   }
 
   let upToTimestamp = input.message_id;
   let seqNo = input.seqno;
   if (upToTimestamp === undefined) {
-    const response = await deps.ws.request<HistoryResponse>(
-      'history',
-      buildHistoryParams({ chatId: resolved.chat_id, limit: NEWEST_PAGE_LIMIT }),
+    /*
+     * Границу берём страницей истории, и адресуется тут только чат: метки в параметрах нет вовсе.
+     * Ветка с заданным message_id этого вызова не делает, поэтому перехват стоит именно здесь.
+     */
+    const newestPage = await requestChatAddressed(
+      { addresses: 'chat_only', query: input.chat, resolved },
+      () =>
+        deps.ws.request<HistoryResponse>(
+          'history',
+          buildHistoryParams({ chatId: resolved.chat_id, limit: NEWEST_PAGE_LIMIT }),
+        ),
     );
-    const entry = findChatEntry(response, resolved.chat_id) as { Messages?: unknown } | undefined;
+    if (!newestPage.ok) {
+      return newestPage.failure;
+    }
+    const entry = findChatEntry(newestPage.value, resolved.chat_id) as { Messages?: unknown } | undefined;
     /* Страница приходит от старых к новым - самое свежее в хвосте */
     const newest = enrichMessages(entry?.Messages, { myGuid: guid, reactionMap: deps.reactionMap }).at(-1);
     if (newest === undefined) {

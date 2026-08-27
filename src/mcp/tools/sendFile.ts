@@ -23,6 +23,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
 import { resolveChat, type ChatCandidate } from '../../chat/resolveChat.js';
+import { buildChatResolveFailure, type ChatResolveFailure } from '../../chat/resolveFailure.js';
 import {
   ConfirmRejectedError,
   encodeToken,
@@ -125,7 +126,7 @@ export type SendFileResult =
   | SendFileDraft
   | SendFileSent
   | { status: 'ambiguous_chat'; candidates: ChatCandidate[] }
-  | { status: 'chat_not_found'; query: string }
+  | ChatResolveFailure
   | { status: 'file_not_found'; path: string };
 
 interface FileDescription {
@@ -179,7 +180,7 @@ export async function sendFile(
     return { status: 'ambiguous_chat', candidates: resolved.candidates };
   }
   if (resolved.status === 'not_found') {
-    return { status: 'chat_not_found', query: input.chat };
+    return buildChatResolveFailure({ query: input.chat, reason: 'name_not_found' });
   }
 
   const description = await describeFile(input.path);

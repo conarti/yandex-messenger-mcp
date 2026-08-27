@@ -19,6 +19,7 @@
  * даёт (§17.10): тогда возвращается `thread_unsupported` с причиной, а не тихий отказ.
  */
 import { resolveChat, type ChatCandidate } from '../../chat/resolveChat.js';
+import { buildChatResolveFailure, type ChatResolveFailure } from '../../chat/resolveFailure.js';
 import { resolveLink } from '../../chat/resolveLink.js';
 import { getMessageInfo, type MessageInfoResult } from '../../protocol/messageInfo.js';
 import { listReactions, type MessageReactionsDetail } from '../../protocol/reactions.js';
@@ -53,7 +54,7 @@ export type GetMessageResult =
       reason: string;
     }
   | { status: 'ambiguous_chat'; candidates: ChatCandidate[] }
-  | { status: 'chat_not_found'; query: string }
+  | ChatResolveFailure
   | { status: 'invalid_input'; reason: string };
 
 /** Одна цель адресации: чат, метка и (для ссылок) invite_hash */
@@ -131,7 +132,7 @@ async function resolveTarget(deps: ToolDeps, input: GetMessageInput, myGuid: str
     return { kind: 'result', result: { status: 'ambiguous_chat', candidates: resolved.candidates } };
   }
   if (resolved.status === 'not_found') {
-    return { kind: 'result', result: { status: 'chat_not_found', query: input.chat } };
+    return { kind: 'result', result: buildChatResolveFailure({ query: input.chat, reason: 'name_not_found' }) };
   }
   return { kind: 'target', value: { chatId: resolved.chat_id, timestamp: input.message_id } };
 }
