@@ -39,18 +39,20 @@ function makeDeps(overrides: { wsRequest?: unknown; httpCall?: unknown } = {}): 
   deps: ToolDeps;
   wsRequest: ReturnType<typeof vi.fn>;
   httpCall: ReturnType<typeof vi.fn>;
+  getWhoami: ReturnType<typeof vi.fn>;
 } {
   const wsRequest = vi.fn(overrides.wsRequest as never);
   const httpCall = vi.fn(overrides.httpCall as never);
+  const getWhoami = vi.fn(async () => ({ uid: '123', guid: MY_GUID }));
   const deps = {
     ws: { request: wsRequest },
     http: { call: httpCall },
-    auth: { getWhoami: async () => ({ uid: '123', guid: MY_GUID }) },
+    auth: { getWhoami },
     config,
     logger,
     reactionMap: loadReactionMap(),
   } as unknown as ToolDeps;
-  return { deps, wsRequest, httpCall };
+  return { deps, wsRequest, httpCall, getWhoami };
 }
 
 describe('list_chats', () => {
@@ -342,8 +344,32 @@ describe('search', () => {
 
     const result = await search(deps, { query: 'x', entities: ['users', 'chats'] });
 
-    expect(result.users).toEqual([{ guid: 'g1', name: 'Иван' }]);
+    /* chat_id для человека сконструирован из пары guid (§5): партнёр 'g1' < MY_GUID нет,
+     * значит порядок пары - мой guid первым */
+    expect(result.users).toEqual([
+      { guid: 'g1', chat_id: `${MY_GUID}_g1`, chat_id_via: 'user_search', name: 'Иван' },
+    ]);
     expect(result.chats).toEqual([{ chat_id: '0/0/x', name: 'Команда', members_count: 3 }]);
+  });
+
+  it('entities без users не тянет getWhoami: своего guid для сообщений не нужно', async () => {
+    const { deps, getWhoami } = makeDeps({
+      httpCall: async () => ({ messages: { items: [], total: 0, limit: 50 } }),
+    });
+
+    await search(deps, { query: 'x', entities: ['messages'] });
+
+    expect(getWhoami).not.toHaveBeenCalled();
+  });
+
+  it('entities с users тянет getWhoami: без него chat_id для человека не собрать', async () => {
+    const { deps, getWhoami } = makeDeps({
+      httpCall: async () => ({ users: { items: [{ data: { guid: 'g1' } }], total: 1, limit: 50 } }),
+    });
+
+    await search(deps, { query: 'x', entities: ['users'] });
+
+    expect(getWhoami).toHaveBeenCalledTimes(1);
   });
 
   it('эскалация сюрфейсится наружу', async () => {

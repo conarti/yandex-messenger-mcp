@@ -8,6 +8,7 @@
  * это ровно та форма, которую нормализует messageShape (живой захват 2026-07-17),
  * поэтому поисковые сообщения имеют ту же схему, что и сообщения из get_history.
  */
+import { buildPrivateChatId } from '../../chat/resolveChat.js';
 import type { SearchEntity } from '../../config/defaults.js';
 import { searchWithEscalation } from '../../protocol/search.js';
 import { normalizeMessage, type Message } from '../../protocol/messageShape.js';
@@ -23,6 +24,14 @@ export interface SearchInput {
 
 export interface UserHit {
   guid: string;
+  /** Приватный ChatId для адресации найденного человека - без него его нечем адресовать */
+  chat_id: string;
+  /**
+   * Провенанс `chat_id`: он тут не наблюдён сервером, а СКОНСТРУИРОВАН из пары guid
+   * (buildPrivateChatId, §5) - тем же способом и с той же меткой, что `ChatCandidate.via`
+   * в resolveChat.ts помечает конструированный (не пришедший из поиска чатов) вариант.
+   */
+  chat_id_via: 'user_search';
   name?: string;
 }
 
@@ -43,14 +52,19 @@ export interface SearchResult {
   truncation_reason?: string;
 }
 
-function toUserHit(item: unknown): UserHit | undefined {
+function toUserHit(item: unknown, myGuid: string): UserHit | undefined {
   const data = asObject(asObject(item)?.['data']);
   const guid = stringOr(data?.['guid']);
   if (guid === undefined) {
     return undefined;
   }
   const name = stringOr(data?.['display_name']) ?? stringOr(data?.['public_name']);
-  return { guid, ...(name !== undefined ? { name } : {}) };
+  return {
+    guid,
+    chat_id: buildPrivateChatId(guid, myGuid),
+    chat_id_via: 'user_search',
+    ...(name !== undefined ? { name } : {}),
+  };
 }
 
 function toChatHit(item: unknown): ChatHit | undefined {
@@ -89,8 +103,10 @@ export async function search(deps: ToolDeps, input: SearchInput): Promise<Search
       .filter((message): message is Message => message !== undefined);
   }
   if (entities.includes('users')) {
+    /* Свой guid нужен только тут - конструировать chat_id для найденного человека (§5) */
+    const { guid: myGuid } = await deps.auth.getWhoami();
     result.users = (outcome.buckets['users'] ?? [])
-      .map(toUserHit)
+      .map((item) => toUserHit(item, myGuid))
       .filter((hit): hit is UserHit => hit !== undefined);
   }
   if (entities.includes('chats')) {
