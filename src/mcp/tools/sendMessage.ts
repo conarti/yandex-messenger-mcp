@@ -22,6 +22,7 @@
 import { resolveChat, type ChatCandidate } from '../../chat/resolveChat.js';
 import { buildChatResolveFailure, type ChatResolveFailure } from '../../chat/resolveFailure.js';
 import { resolveMention, type MentionCandidate } from '../../chat/resolveMention.js';
+import { renderMentionNames, substituteMentionTokens, type MentionPair } from '../../chat/mentionTokens.js';
 import {
   ConfirmRejectedError,
   encodeToken,
@@ -72,7 +73,19 @@ export interface SendMessageDraft {
   chat_id: string;
   /** Имя чата, если резолв его дал: подтверждать отправку по паре guid человек не может */
   chat_name?: string;
+  /**
+   * КАНОНИЧЕСКИЙ текст: названные в `mentions` строки уже заменены на токены `@<guid>` - именно так
+   * упоминание уходит на провод и рендерится клиентом (#15). Предмет отпечатка и эха: на confirm
+   * возвращается ДОСЛОВНО эта строка, а не исходная с `@Имя`.
+   */
   text: string;
+  /**
+   * Читаемая проекция `text`, где guid развёрнуты обратно в имена. ТОЛЬКО ДЛЯ ЧТЕНИЯ: в отпечаток
+   * не входит и обратно на confirm не предъявляется (эхо превью вместо `text` отправку отклонит).
+   * Присутствует ровно тогда, когда подстановка применилась: иначе была бы копией `text`. Существует
+   * потому, что по строке с 37-символьными guid человек не видит, кто упомянут в каком месте.
+   */
+  text_preview?: string;
   /**
    * Резолвнутые упоминания. Предъявляются обратно на confirm; порядок значим (§6.1).
    * Присутствует ВСЕГДА (пустой массив тоже): вызывающий не должен различать «не было
@@ -184,18 +197,24 @@ export function sendFingerprint(input: SendPayloadInput): string {
   return fingerprint('send', buildSendPayload(input));
 }
 
-/** Итог резолва всех упоминаний draft: либо чистый список guid+имя, либо готовый отказ наружу */
+/** Итог резолва всех упоминаний draft: либо кандидаты и пары, либо готовый отказ наружу */
 type MentionsOutcome =
-  | { status: 'ok'; candidates: MentionCandidate[] }
+  | { status: 'ok'; candidates: MentionCandidate[]; pairs: MentionPair[] }
   | { status: 'fail'; result: SendMessageResult };
 
 /**
  * Резолвит каждый запрос упоминания на DRAFT и схлопывает дубли по guid с сохранением
  * первого вхождения (зеркально `buildMentions`, §6.1 правило 3). Первый неразрешённый -
  * немедленный отказ наружу: неоднозначность блокирует отправку, а не угадывает (P2/AC-3).
+ *
+ * Возвращает ДВА поля с разным назначением. `candidates` схлопнуты по guid и кормят отпечаток и
+ * `draft.mentions[]`. `pairs` собираются МИМО дедупа, по элементу на каждый запрос: два разных
+ * запроса-синонима, схлопнувшихся в один guid, обязаны быть подставлены ОБА, иначе при
+ * `text:'@Ваня и @Иван'` половина текста ушла бы в необратимое сообщение неподставленной.
  */
 async function resolveMentions(deps: ToolDeps, chatId: string, queries: string[]): Promise<MentionsOutcome> {
   const candidates: MentionCandidate[] = [];
+  const pairs: MentionPair[] = [];
   const seen = new Set<string>();
   for (const query of queries) {
     const resolved = await resolveMention(query, {
@@ -216,12 +235,13 @@ async function resolveMentions(deps: ToolDeps, chatId: string, queries: string[]
       deps.logger.info('send_message: упоминание не найдено');
       return { status: 'fail', result: { status: 'mention_not_found', query } };
     }
+    pairs.push({ query, guid: resolved.guid });
     if (!seen.has(resolved.guid)) {
       seen.add(resolved.guid);
       candidates.push({ guid: resolved.guid, ...(resolved.name !== undefined ? { name: resolved.name } : {}) });
     }
   }
-  return { status: 'ok', candidates };
+  return { status: 'ok', candidates, pairs };
 }
 
 /**
@@ -275,6 +295,12 @@ export async function sendMessage(deps: ToolDeps, input: SendMessageInput): Prom
       return mentions.result;
     }
     const guids = mentions.candidates.map((candidate) => candidate.guid);
+    /*
+     * Подстановка токенов идёт ДО отпечатка, и подставленный текст обязан уйти В ОБА сайта: в поле
+     * `text` отпечатка ниже и в `draft.text`. Правка одной выдачи дала бы `fingerprint_mismatch` на
+     * КАЖДОЙ отправке с упоминанием - confirm считает свой отпечаток над эхом `draft.text`.
+     */
+    const substitution = substituteMentionTokens(input.text, mentions.pairs);
     /* Отпечаток покрывает ровно четыре вещи §6.1: guid, reply, forward, text. Цитата в него НЕ входит (§6.2) */
     const draft: DraftToken = {
       op: 'send',
@@ -283,10 +309,16 @@ export async function sendMessage(deps: ToolDeps, input: SendMessageInput): Prom
         guids,
         ...(input.reply_to_message_id !== undefined ? { replyToMessageId: input.reply_to_message_id } : {}),
         ...(input.forward_from !== undefined ? { forwardFrom: input.forward_from } : {}),
-        text: input.text,
+        text: substitution.text,
       }),
       payload_id: createPayloadId(),
     };
+    /*
+     * Превью считается ПОСЛЕ сборки токена и в отпечаток не передаётся. Источник имён - `candidates`
+     * (guid -> имя), поэтому превью и `draft.mentions[]` не могут разойтись по построению.
+     */
+    const textPreview =
+      substitution.substituted > 0 ? renderMentionNames(substitution.text, mentions.candidates) : undefined;
     /*
      * Превью цитаты reply - перечитыванием цели с сервера (§6.2, образец editMessage.ts:83-88).
      * Цитата информационна: в отпечаток не входит и обратно на confirm не предъявляется, поэтому
@@ -299,6 +331,7 @@ export async function sendMessage(deps: ToolDeps, input: SendMessageInput): Prom
     deps.logger.info('send_message: подготовлен draft, ничего не отправлено', {
       via: resolved.via,
       mentions: mentions.candidates.length,
+      substituted: substitution.substituted,
       reply: input.reply_to_message_id !== undefined,
       forward: input.forward_from !== undefined,
     });
@@ -306,7 +339,8 @@ export async function sendMessage(deps: ToolDeps, input: SendMessageInput): Prom
       status: 'draft',
       chat_id: resolved.chat_id,
       ...(resolved.name !== undefined ? { chat_name: resolved.name } : {}),
-      text: input.text,
+      text: substitution.text,
+      ...(textPreview !== undefined ? { text_preview: textPreview } : {}),
       mentions: mentions.candidates,
       ...(replyQuote !== undefined ? { reply_quote: replyQuote.quote, quote_truncated: replyQuote.truncated } : {}),
       confirm_token: encodeToken(draft),
@@ -315,7 +349,11 @@ export async function sendMessage(deps: ToolDeps, input: SendMessageInput): Prom
         'НЕИЗМЕНЁННЫМИ chat и text' +
         (guids.length > 0
           ? ' и mentions - РОВНО теми guid из этого ответа, в том же порядке: изменение любого отклонит отправку.'
-          : ': изменение любого из них отклонит отправку.'),
+          : ': изменение любого из них отклонит отправку.') +
+        (textPreview !== undefined
+          ? ' Поле text_preview - ТОЛЬКО ДЛЯ ЧТЕНИЯ, оно показывает имена вместо guid: эхом возвращайте' +
+            ' text, а не text_preview, иначе отправка будет отклонена.'
+          : ''),
     };
   }
 

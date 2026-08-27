@@ -389,7 +389,13 @@ export function createServer(options: CreateServerOptions): McpServer {
         'поэтому чат и текст на шаге confirm сверяются с подтверждёнными; расхождение отклоняется.',
       inputSchema: {
         chat: z.string().min(1).describe('ChatId либо поисковый запрос для резолва чата'),
-        text: z.string().min(1).describe('Текст сообщения (упоминания видны человеку как @Имя, guid в текст НЕ подставляются)'),
+        text: z
+          .string()
+          .min(1)
+          .describe(
+            'Текст сообщения. На шаге draft названные в mentions строки заменяются в тексте на токены ' +
+              '@<guid> - именно так упоминание пингует адресата; на confirm верните draft.text эхом без изменений',
+          ),
         mentions: z
           .array(z.string().min(1))
           .optional()
