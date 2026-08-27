@@ -791,9 +791,20 @@ reads/reactions - **сиблинги `ClientMessage`**, не внутри нег
 "RecentUserReads":[{ "UserInfo":{}, "Timestamp":0 }], "SeenByPartnerMcs":0,
 "Reactions":[{ "Type":"👍", "Count":1 }],
 "RecentUserReactions":[{ "UserInfo":{}, "Type":"👍", "Timestamp":0 }], "ReactionsVersion":0,
-"ForwardedMessages":[...], "MentionedUsers":[UserInfo], "Users":[UserInfo]
+"ForwardedMessages":[{ "Payload":{}, "ServerMessageInfo":{} }], "MentionedUsers":[UserInfo], "Users":[UserInfo]
 ```
 `ClientMessage` common: `{ NotificationBehaviour, IsSilent, PersistentInlineButtons, CustomPayload, LogData }`.
+
+**`ForwardedMessages` - форма элемента наблюдена живьём** (2026-08-28, разбор в
+[`docs/spikes/v2/SPIKE-FORWARD-FRAME.md`](spikes/v2/SPIKE-FORWARD-FRAME.md)). Обёртка -
+`{Payload, ServerMessageInfo}`, где **`Payload` это САМО ТЕЛО** (`Text.MessageText`, `ChatId`
+исходного чата, `PayloadId`, `CustomPayload`). Ключей `ClientMessage` и `Plain` в цепочке нет
+вовсе - именно поэтому разбор, ожидавший `{ClientMessage, ServerMessageInfo}`, молча отбрасывал
+каждый оригинал. Блок из нескольких пересылок приходит массивом элементов той же формы.
+`Payload.ChatId` отличается от чата назначения, то есть адрес оригинала выводится из данных.
+У элемента есть сиблинг `Meta:{Origin:int}`, значение не расшифровано. В том же кадре
+`ForwardedMessageRefs` и `ForwardedMessageStyles` **не приходят вовсе**, поэтому `context`
+у пересылки не строится.
 
 **UserInfo** (`From`): `{ Guid, DisplayName, PublicName, AccountCategory(DOMAIN|INDIVIDUAL),
 AvatarId, Version, LocalizationDescriptor:{Version,Default,Langs}, Localization:{<lang>:{DisplayName,AvatarId}},
