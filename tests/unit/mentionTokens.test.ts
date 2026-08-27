@@ -98,6 +98,22 @@ describe('substituteMentionTokens: правило 6 - левая граница 
 
     expect(result).toBe(`@${IVAN}@${PETR}`);
   });
+
+  it('левая граница действует и на ГОЛУЮ форму: guid внутри приватного chat_id не трогается', () => {
+    /*
+     * `chat_id` приватного чата это пара guid через `_` (§5). Без левой границы у голой формы
+     * названный ВТОРОЙ guid пары совпал бы посреди идентификатора и дал `<guidA>_@<guidB>`.
+     * Первый guid пары защищён правой границей (`_` продолжает токен), второй не был защищён ничем.
+     */
+    const chatId = `${IVAN}_${PETR}`;
+
+    expect(substitute(`чат ${chatId} посмотри`, [{ query: PETR, guid: PETR }])).toBe(
+      `чат ${chatId} посмотри`,
+    );
+    expect(substitute(`чат ${chatId} посмотри`, [{ query: IVAN, guid: IVAN }])).toBe(
+      `чат ${chatId} посмотри`,
+    );
+  });
 });
 
 describe('substituteMentionTokens: схлопнутые дубли, каскад, пустой вход', () => {

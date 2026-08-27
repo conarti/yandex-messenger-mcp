@@ -337,6 +337,12 @@ function toServerMessageShape(raw: unknown): unknown {
   if (payload !== undefined) {
     return { ClientMessage: { Plain: payload }, ServerMessageInfo: element['ServerMessageInfo'] };
   }
+  /*
+   * Запасной разбор СУЖЕН против прежнего: раньше пробовались обе догадки подряд
+   * (`normalizeMessage(raw) ?? normalizeMessage(raw.ServerMessage)`), теперь при наличии
+   * `ServerMessage` сам элемент вторым заходом уже не пробуется. Сужение сознательное:
+   * перебирать формы, ни одна из которых живьём не наблюдалась, значит множить догадки.
+   */
   return element['ServerMessage'] ?? element;
 }
 

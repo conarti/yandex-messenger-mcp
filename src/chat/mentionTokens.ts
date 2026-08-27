@@ -110,12 +110,17 @@ function matchAt(
     /*
      * Правило 3: голая форма не засчитывается сразу после `@`. При однопроходной реализации правило
      * избыточно, но записано явно, чтобы переписывание «глобальной регуляркой» не проскочило мимо.
+     * Правило 6 действует и здесь, симметрично форме с `@`: без левой границы текст, содержащий
+     * приватный `chat_id` (`<guidA>_<guidB>`, §5), при названном ВТОРОМ guid получил бы `@` посреди
+     * идентификатора - `<guidA>_@<guidB>`. Первый guid пары от этого защищён правой границей
+     * (`_` продолжает токен), второй не был защищён ничем.
      */
     if (
       pair.bareForm !== undefined &&
       text.startsWith(pair.bareForm, cursor) &&
       endsAtBoundary(text, cursor + pair.bareForm.length) &&
-      previous !== '@'
+      previous !== '@' &&
+      (cursor === 0 || previousWasSubstitution || !TOKEN_CHARACTER.test(previous))
     ) {
       return { guid: pair.guid, length: pair.bareForm.length };
     }
