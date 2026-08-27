@@ -4,6 +4,7 @@ import { buildPrivateChatId, isChatId, resolveChat } from '../../src/chat/resolv
 
 const MY_GUID = 'aaaaaaaa-1111-2222-3333-444444444444';
 const PARTNER_GUID = 'bbbbbbbb-5555-6666-7777-888888888888';
+const PARTNER_GUID_LESS_THAN_MY_GUID = '00000000-5555-6666-7777-888888888888';
 const OTHER_GUID = 'cccccccc-9999-0000-1111-222222222222';
 const GROUP_CHAT_ID = '0/0/7ba79b6d-1234-5678-9abc-def012345678';
 
@@ -40,8 +41,14 @@ describe('isChatId', () => {
 
 describe('buildPrivateChatId', () => {
   /* Порядок не декоративный: перестановка даёт другую строку и другой чат (§5) */
-  it('порядок - собеседник, потом я', () => {
-    expect(buildPrivateChatId(PARTNER_GUID, MY_GUID)).toBe(`${PARTNER_GUID}_${MY_GUID}`);
+  it('guid собеседника лексикографически больше моего -> мой guid идёт первым', () => {
+    expect(buildPrivateChatId(PARTNER_GUID, MY_GUID)).toBe(`${MY_GUID}_${PARTNER_GUID}`);
+  });
+
+  it('guid собеседника лексикографически меньше моего -> его guid идёт первым', () => {
+    expect(buildPrivateChatId(PARTNER_GUID_LESS_THAN_MY_GUID, MY_GUID)).toBe(
+      `${PARTNER_GUID_LESS_THAN_MY_GUID}_${MY_GUID}`,
+    );
   });
 });
 
@@ -78,14 +85,14 @@ describe('resolveChat', () => {
     expect(result.candidates.every((c) => c.via === 'chat_search')).toBe(true);
   });
 
-  it('чатов нет, один пользователь -> приватный ChatId собеседник_я', async () => {
+  it('чатов нет, один пользователь -> приватный ChatId из отсортированной пары guid', async () => {
     const { deps: d } = deps({ chats: [], users: [userItem(PARTNER_GUID, 'Иван')] });
 
     const result = await resolveChat('Иван', d);
 
     expect(result).toEqual({
       status: 'resolved',
-      chat_id: `${PARTNER_GUID}_${MY_GUID}`,
+      chat_id: `${MY_GUID}_${PARTNER_GUID}`,
       via: 'user_search',
       name: 'Иван',
     });
@@ -99,8 +106,8 @@ describe('resolveChat', () => {
     expect(result.status).toBe('ambiguous');
     if (result.status !== 'ambiguous') throw new Error('ожидались кандидаты');
     expect(result.candidates.map((c) => c.chat_id)).toEqual([
-      `${PARTNER_GUID}_${MY_GUID}`,
-      `${OTHER_GUID}_${MY_GUID}`,
+      `${MY_GUID}_${PARTNER_GUID}`,
+      `${MY_GUID}_${OTHER_GUID}`,
     ]);
     expect(result.candidates.every((c) => c.kind === 'private')).toBe(true);
   });

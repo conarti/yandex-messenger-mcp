@@ -425,7 +425,7 @@ t.withCredentials = false        // cookie не нужны
 
 - **uid**: числовой (`<numeric-uid>`).
 - **guid** пользователя/сущности: UUID (`<guid-example>`).
-- **ChatId приватного чата**: `<guidA>_<guidB>` (два guid через `_`; порядок - собеседник+я).
+- **ChatId приватного чата**: `<guidA>_<guidB>` (два guid через `_`, отсортированные по кодовым единицам UTF-16).
 - **ChatId группового чата/канала**: `0/0/<guid>` (напр. `0/0/<guid>-...`).
 - **XivaSubscriptionId**: hex40 (`<xiva-subscription-id-hex40>`).
 - **Timestamp**: микросекунды, 16 цифр.
