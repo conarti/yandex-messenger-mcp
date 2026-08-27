@@ -22,7 +22,12 @@
 import { resolveChat, type ChatCandidate } from '../../chat/resolveChat.js';
 import { buildChatResolveFailure, type ChatResolveFailure } from '../../chat/resolveFailure.js';
 import { resolveMention, type MentionCandidate } from '../../chat/resolveMention.js';
-import { renderMentionNames, substituteMentionTokens, type MentionPair } from '../../chat/mentionTokens.js';
+import {
+  MENTION_GUID,
+  renderMentionNames,
+  substituteMentionTokens,
+  type MentionPair,
+} from '../../chat/mentionTokens.js';
 import {
   ConfirmRejectedError,
   encodeToken,
@@ -125,11 +130,6 @@ export type SendMessageResult =
   | { status: 'mention_not_in_chat'; query: string; guid: string; chat_id: string }
   | { status: 'mention_not_found'; query: string };
 
-/**
- * guid упоминания: 36 символов `[0-9a-f-]` (§6.1 правило 4). Алфавит - гард инъективности отпечатка.
- * Регистр строго нижний (§5), без флага `i`: заглавный hex не должен пройти на провод.
- */
-const MENTION_GUID = /^[0-9a-f-]{36}$/;
 
 /**
  * reply_to_message_id / forward_from: только цифры (§6.1 правило 4). Гарантирует, что поля F2/F3

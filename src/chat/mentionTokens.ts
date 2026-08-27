@@ -33,11 +33,13 @@ export interface MentionSubstitution {
 }
 
 /**
- * guid упоминания: 36 символов `[0-9a-f-]` (§5). Тот же алфавит и тот же строго нижний регистр, что
- * у `resolveMention.ts:26` и `sendMessage.ts:118`; флаг `i` не ставится намеренно.
+ * guid упоминания: 36 символов `[0-9a-f-]` (§5), строго нижний регистр, флаг `i` не ставится
+ * намеренно. Длина - первична, регулярка собирается из неё: раньше число и шаблон были двумя
+ * независимыми объявлениями одного факта и разъехались бы молча.
+ * Экспортируется, чтобы `sendMessage.ts` не заводил третью копию того же шаблона.
  */
-const MENTION_GUID = /^[0-9a-f-]{36}$/;
 const MENTION_GUID_LENGTH = 36;
+export const MENTION_GUID = new RegExp(`^[0-9a-f-]{${MENTION_GUID_LENGTH}}$`);
 
 /**
  * Символ, продолжающий токен: буква ЛЮБОГО алфавита, цифра, `_` или `-`. Флаг `u` обязателен -
@@ -114,13 +116,16 @@ function matchAt(
      * приватный `chat_id` (`<guidA>_<guidB>`, §5), при названном ВТОРОМ guid получил бы `@` посреди
      * идентификатора - `<guidA>_@<guidB>`. Первый guid пары от этого защищён правой границей
      * (`_` продолжает токен), второй не был защищён ничем.
+     * Поблажки `previousWasSubstitution`, как у формы с `@`, здесь НЕТ намеренно: она была бы
+     * недостижима. Предыдущее совпадение обязано кончаться на не-токенном символе (`endsAtBoundary`),
+     * а голая форма начинается hex-символом, который токен продолжает - два условия несовместимы.
      */
     if (
       pair.bareForm !== undefined &&
       text.startsWith(pair.bareForm, cursor) &&
       endsAtBoundary(text, cursor + pair.bareForm.length) &&
       previous !== '@' &&
-      (cursor === 0 || previousWasSubstitution || !TOKEN_CHARACTER.test(previous))
+      (cursor === 0 || !TOKEN_CHARACTER.test(previous))
     ) {
       return { guid: pair.guid, length: pair.bareForm.length };
     }
