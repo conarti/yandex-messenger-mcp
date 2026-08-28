@@ -5,9 +5,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../../src/config/loadConfig.js';
 import { loadReactionMap } from '../../src/config/reactionMap.js';
+import { mapResponseStatus } from '../../src/protocol/errors.js';
 import { createLogger } from '../../src/util/logger.js';
 import type { ToolDeps } from '../../src/mcp/tools/deps.js';
 import { getHistory } from '../../src/mcp/tools/getHistory.js';
+import { getMessage } from '../../src/mcp/tools/getMessage.js';
+import { getMessageContext } from '../../src/mcp/tools/getMessageContext.js';
 import { listChats } from '../../src/mcp/tools/listChats.js';
 import { search } from '../../src/mcp/tools/search.js';
 import { mkdtempSync } from 'node:fs';
@@ -16,6 +19,21 @@ import { join } from 'node:path';
 
 const MY_GUID = 'aaaaaaaa-1111-2222-3333-444444444444';
 const CHAT_ID = 'bbbbbbbb-5555-6666-7777-888888888888_aaaaaaaa-1111-2222-3333-444444444444';
+/** Метка-пивот для get_message_context/get_message: 16 цифр (§5), значение синтетическое */
+const PIVOT_TIMESTAMP = '1784287503814009';
+
+/** Отказ бэкенда ENTITY_NOT_FOUND(4) ровно в форме, которую транспорт мапит из DATA-кадра (§14.6) */
+function entityNotFound(method: string, details?: string) {
+  const error = mapResponseStatus(method, {
+    Status: 4,
+    RequestId: 'e4e4e4e4-9999-5555-aaaa-111122223333',
+    ...(details !== undefined ? { Details: details } : {}),
+  });
+  if (error === undefined) {
+    throw new Error('фикстура не собрала ошибку');
+  }
+  return error;
+}
 
 const config = loadConfig({ configDir: mkdtempSync(join(tmpdir(), 'ymm-readtools-')) });
 const logger = createLogger({ level: 'error' });
