@@ -329,6 +329,93 @@ describe('get_history', () => {
 
     expect(result.status).toBe('chat_not_found');
   });
+
+  /*
+   * #18/AC-21 через инструмент целиком, а не только на хелпере (resolveFailure.test.ts): у
+   * `history` адресуемая сущность ровно одна - чат, поэтому ENTITY_NOT_FOUND(4) от мок-WS
+   * обязан прийти вызывающему единой формой отказа, а не сырой MessengerError.
+   */
+  it('ENTITY_NOT_FOUND(4) на history -> единая форма отказа резолва чата (getHistory.ts:107)', async () => {
+    const { deps, wsRequest } = makeDeps({
+      wsRequest: async () => {
+        throw entityNotFound('history', 'no such chat');
+      },
+    });
+
+    const result = await getHistory(deps, { chat: CHAT_ID, limit: 40 });
+
+    expect(result).toMatchObject({ status: 'chat_not_found', reason: 'backend_entity_not_found', candidates: [] });
+    if (result.status !== 'chat_not_found') throw new Error('ожидался отказ резолва');
+    expect(result.next_step).toContain('list_chats');
+    expect(wsRequest).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('get_message_context: ENTITY_NOT_FOUND(4) на history -> единая форма отказа (AC-21)', () => {
+  /* Сторона «до» (getMessageContext.ts:94) - выполняется всегда, до неё окно не строится вовсе */
+  it('код 4 на стороне «до» даёт chat_not_found; сторона «после» не запрашивается', async () => {
+    const { deps, wsRequest } = makeDeps({
+      wsRequest: async () => {
+        throw entityNotFound('history', 'no such chat');
+      },
+    });
+
+    const result = await getMessageContext(deps, { chat: CHAT_ID, message_id: PIVOT_TIMESTAMP, after: 5 });
+
+    expect(result).toMatchObject({ status: 'chat_not_found', reason: 'backend_entity_not_found', candidates: [] });
+    if (result.status !== 'chat_not_found') throw new Error('ожидался отказ резолва');
+    expect(result.next_step).toContain('list_chats');
+    /* Отказ пришёл на первом же вызове history - до второго дело не дошло */
+    expect(wsRequest).toHaveBeenCalledTimes(1);
+  });
+
+  /*
+   * Сторона «после» (getMessageContext.ts:118) собирается ТОЛЬКО при after>0 - без явного
+   * after>0 ветка была бы условной, и перехват там остался бы непроверенным (вакуумный ассерт).
+   * Поэтому сторона «до» здесь нарочно отвечает успехом, а падает именно второй вызов.
+   */
+  it('код 4 на стороне «после» (after>0) тоже даёт chat_not_found', async () => {
+    let call = 0;
+    const { deps, wsRequest } = makeDeps({
+      wsRequest: async () => {
+        call += 1;
+        if (call === 1) {
+          return { Chats: [{ ChatId: CHAT_ID, Messages: [] }] };
+        }
+        throw entityNotFound('history', 'no such chat');
+      },
+    });
+
+    const result = await getMessageContext(deps, { chat: CHAT_ID, message_id: PIVOT_TIMESTAMP, after: 5 });
+
+    expect(result).toMatchObject({ status: 'chat_not_found', reason: 'backend_entity_not_found', candidates: [] });
+    if (result.status !== 'chat_not_found') throw new Error('ожидался отказ резолва');
+    expect(result.next_step).toContain('list_chats');
+    /* Оба вызова history реально произошли: первый - сторона «до» (успех), второй - перехваченный */
+    expect(wsRequest).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('get_message: код 4 на message_info НЕ подменяется отказом резолва чата (AC-21, главный дефект)', () => {
+  /*
+   * `get_message` адресует message_info двумя сущностями сразу - чатом И сообщением
+   * (ChatId+Timestamp): requestChatAddressed тут намеренно не применяется (предпосылка П1
+   * не выполняется), поэтому ENTITY_NOT_FOUND(4) обязан всплыть как есть - иначе отказ по
+   * несуществующему СООБЩЕНИЮ в существующем чате выглядел бы как «чат не найден».
+   */
+  it('ENTITY_NOT_FOUND(4) на message_info пробрасывается как MessengerError, а не chat_not_found', async () => {
+    const { deps } = makeDeps({
+      wsRequest: async () => {
+        throw entityNotFound('message_info', 'сообщение удалено');
+      },
+    });
+
+    await expect(getMessage(deps, { chat: CHAT_ID, message_id: PIVOT_TIMESTAMP })).rejects.toMatchObject({
+      layer: 'application',
+      code: 4,
+      codeName: 'ENTITY_NOT_FOUND',
+    });
+  });
 });
 
 describe('search', () => {

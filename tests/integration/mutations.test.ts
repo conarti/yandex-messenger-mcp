@@ -200,6 +200,24 @@ describe('mark_read: одним вызовом, форма и эффект по�
     expect(result).toMatchObject({ status: 'empty_chat', chat_id: CHAT_ID });
     expect(mock.requestsOf('push')).toHaveLength(0);
   });
+
+  /*
+   * #18/AC-21 через инструмент целиком: без message_id граница берётся страницей history
+   * (markRead.ts:92), и это единственное место mark_read, где адресуется только чат - именно
+   * поэтому перехват стоит здесь, а не в ветке с заданным message_id (push уходит без history).
+   */
+  it('без message_id: ENTITY_NOT_FOUND(4) на history -> единая форма отказа, push не уходит', async () => {
+    mock.responders.set('history', (request, connection) =>
+      mock.reply(connection, request, { Status: 4, Details: 'no such chat' }),
+    );
+
+    const result = await markRead(deps, { chat: CHAT_ID });
+
+    expect(result).toMatchObject({ status: 'chat_not_found', reason: 'backend_entity_not_found', candidates: [] });
+    if (result.status !== 'chat_not_found') throw new Error('ожидался отказ резолва');
+    expect(result.next_step).toContain('list_chats');
+    expect(mock.requestsOf('push')).toHaveLength(0);
+  });
 });
 
 describe('pin_message: одним вызовом, семантика подтверждена живьём (US-009)', () => {
