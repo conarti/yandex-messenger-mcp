@@ -21,10 +21,11 @@
  */
 import { resolveChat, type ChatCandidate } from '../../chat/resolveChat.js';
 import { buildChatResolveFailure, type ChatResolveFailure } from '../../chat/resolveFailure.js';
-import { MENTION_GUID, type MentionCandidate } from '../../chat/resolveMention.js';
+import { type MentionCandidate } from '../../chat/resolveMention.js';
 import { resolveMentions, type MentionResolveFailure } from '../../chat/resolveMentions.js';
 import { renderMentionNames, substituteMentionTokens } from '../../chat/mentionTokens.js';
 import {
+  assertMentionGuids,
   ConfirmRejectedError,
   encodeToken,
   fingerprint,
@@ -154,14 +155,7 @@ export interface SendPayloadInput {
  * (P4) - гард, а не описание.
  */
 export function buildSendPayload(input: SendPayloadInput): string {
-  for (const guid of input.guids) {
-    if (!MENTION_GUID.test(guid)) {
-      throw new ConfirmRejectedError(
-        'malformed_guid',
-        `guid упоминания не в формате /^[0-9a-f-]{36}$/: ${JSON.stringify(guid)}`,
-      );
-    }
-  }
+  assertMentionGuids(input.guids);
   if (input.replyToMessageId !== undefined && !MESSAGE_ID_DIGITS.test(input.replyToMessageId)) {
     throw new ConfirmRejectedError(
       'malformed_message_id',
@@ -239,6 +233,7 @@ export async function sendMessage(deps: ToolDeps, input: SendMessageInput): Prom
     const mentions = await resolveMentions(input.mentions ?? [], {
       http: deps.http,
       logger: deps.logger,
+      operation: 'send_message',
       chatId: resolved.chat_id,
       searchLimit: deps.config.limits.searchDefaultLimit,
     });

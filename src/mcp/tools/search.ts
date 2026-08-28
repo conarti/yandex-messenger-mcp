@@ -108,24 +108,31 @@ export async function search(deps: ToolDeps, input: SearchInput): Promise<Search
    * chat_id (§5), - поэтому берётся ОДИН раз на весь вызов, а не по разу на ветку.
    * Когда ни та, ни другая не запрошены, лишнего похода за whoami не случается.
    */
-  const myGuid = wantsMessages || wantsUsers ? (await deps.auth.getWhoami()).guid : undefined;
+  /*
+   * Обе ветки живут ВНУТРИ одного блока, а не под отдельными гардами `myGuid !== undefined`:
+   * при внешнем гарде запрошенный бакет мог бы молча исчезнуть из ответа, без ошибки и без лога.
+   * Здесь `myGuid` существует по построению, и пропасть бакету не на чем.
+   */
+  if (wantsMessages || wantsUsers) {
+    const { guid: myGuid } = await deps.auth.getWhoami();
 
-  if (wantsMessages && myGuid !== undefined) {
-    result.messages = (outcome.buckets['messages'] ?? [])
-      .map((item) => {
-        /* `item.data` - тот же конверт, что `ServerMessage` в истории: и база, и сиблинги */
-        const siblings = asObject(item)?.['data'];
-        const base = normalizeMessage(siblings);
-        return base === undefined
-          ? undefined
-          : enrichMessage(base, { myGuid, reactionMap: deps.reactionMap, siblings });
-      })
-      .filter((message): message is EnrichedMessage => message !== undefined);
-  }
-  if (wantsUsers && myGuid !== undefined) {
-    result.users = (outcome.buckets['users'] ?? [])
-      .map((item) => toUserHit(item, myGuid))
-      .filter((hit): hit is UserHit => hit !== undefined);
+    if (wantsMessages) {
+      result.messages = (outcome.buckets['messages'] ?? [])
+        .map((item) => {
+          /* `item.data` - тот же конверт, что `ServerMessage` в истории: и база, и сиблинги */
+          const siblings = asObject(item)?.['data'];
+          const base = normalizeMessage(siblings);
+          return base === undefined
+            ? undefined
+            : enrichMessage(base, { myGuid, reactionMap: deps.reactionMap, siblings });
+        })
+        .filter((message): message is EnrichedMessage => message !== undefined);
+    }
+    if (wantsUsers) {
+      result.users = (outcome.buckets['users'] ?? [])
+        .map((item) => toUserHit(item, myGuid))
+        .filter((hit): hit is UserHit => hit !== undefined);
+    }
   }
   if (entities.includes('chats')) {
     result.chats = (outcome.buckets['chats'] ?? [])

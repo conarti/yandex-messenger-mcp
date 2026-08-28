@@ -28,6 +28,7 @@
  * проверенный чат. Токен - это память о драфте, а не полномочие.
  */
 import { createHash } from 'node:crypto';
+import { MENTION_GUID } from '../chat/resolveMention.js';
 
 /** Операции, несущие confirm (необратимый путь). Реверсибельные мутации токена не имеют. */
 export type ConfirmOp = 'send' | 'delete' | 'edit' | 'send_file' | 'vote';
@@ -51,6 +52,25 @@ export class ConfirmRejectedError extends Error {
   ) {
     super(`confirm отвергнут (${reason}): ${detail}`);
     this.name = 'ConfirmRejectedError';
+  }
+}
+
+/**
+ * Алфавит guid в составе упоминаний, ОБЩИЙ инвариант двух необратимых путей (send и edit).
+ *
+ * Зачем гард и почему до сборки нагрузки: и `buildSendPayload`, и `buildEditPayload` склеивают
+ * поля через `\n` и `,`. Guid с этими символами внутри дал бы коллизию с текстом, несущим те же
+ * символы, и два разных состава получили бы один отпечаток - на пути, где `push` не ретраится.
+ * Проверка живёт здесь, а не по копии в каждом инструменте: разъехаться этим двум гардам нельзя.
+ */
+export function assertMentionGuids(guids: readonly string[]): void {
+  for (const guid of guids) {
+    if (!MENTION_GUID.test(guid)) {
+      throw new ConfirmRejectedError(
+        'malformed_guid',
+        `guid упоминания не в формате /^[0-9a-f-]{36}$/: ${JSON.stringify(guid)}`,
+      );
+    }
   }
 }
 

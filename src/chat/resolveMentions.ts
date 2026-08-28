@@ -32,6 +32,12 @@ export type MentionsOutcome =
 /** Логгер обязателен: у `SearchDeps` он опционален, а этот путь пишет решения по каждому запросу */
 export interface ResolveMentionsDeps extends ResolveMentionDeps {
   logger: Logger;
+  /**
+   * Какая операция резолвит состав. Нужна ЛОГУ: модуль общий для двух исходящих путей, а
+   * логгер скоупа не даёт, поэтому без метки строки `send_message` и `edit_message`
+   * неразличимы. Сам запрос в лог не кладём - это приватные данные.
+   */
+  operation: 'send_message' | 'edit_message';
 }
 
 /**
@@ -54,18 +60,21 @@ export async function resolveMentions(
   for (const query of queries) {
     const resolved = await resolveMention(query, deps);
     if (resolved.status === 'ambiguous') {
-      deps.logger.info('упоминание неоднозначно, состав отклонён', { candidates: resolved.candidates.length });
+      deps.logger.info('упоминание неоднозначно, состав отклонён', {
+        operation: deps.operation,
+        candidates: resolved.candidates.length,
+      });
       return { status: 'fail', failure: { status: 'ambiguous_mention', query, candidates: resolved.candidates } };
     }
     if (resolved.status === 'not_in_chat') {
-      deps.logger.info('упоминание вне чата, состав отклонён');
+      deps.logger.info('упоминание вне чата, состав отклонён', { operation: deps.operation });
       return {
         status: 'fail',
         failure: { status: 'mention_not_in_chat', query, guid: resolved.guid, chat_id: deps.chatId },
       };
     }
     if (resolved.status === 'not_found') {
-      deps.logger.info('упоминание не найдено, состав отклонён');
+      deps.logger.info('упоминание не найдено, состав отклонён', { operation: deps.operation });
       return { status: 'fail', failure: { status: 'mention_not_found', query } };
     }
     pairs.push({ query, guid: resolved.guid });

@@ -350,7 +350,9 @@ export function createServer(options: CreateServerOptions): McpServer {
     'search',
     {
       title: 'Search messenger',
-      description: 'Поиск по сообщениям, пользователям и чатам через HTTP registry.',
+      description: 'Поиск по сообщениям, пользователям и чатам через HTTP registry. Найденные сообщения приходят ' +
+        'обогащёнными так же, как в read-инструментах: reads, mentions, reactions, thread, forwarded, from_me. ' +
+        'У найденных людей рядом с guid отдаётся chat_id, которым их можно адресовать.',
       inputSchema: {
         query: z.string().min(1).describe('Поисковый запрос'),
         entities: z
