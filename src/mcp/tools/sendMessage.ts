@@ -21,8 +21,9 @@
  */
 import { resolveChat, type ChatCandidate } from '../../chat/resolveChat.js';
 import { buildChatResolveFailure, type ChatResolveFailure } from '../../chat/resolveFailure.js';
-import { MENTION_GUID, resolveMention, type MentionCandidate } from '../../chat/resolveMention.js';
-import { renderMentionNames, substituteMentionTokens, type MentionPair } from '../../chat/mentionTokens.js';
+import { MENTION_GUID, type MentionCandidate } from '../../chat/resolveMention.js';
+import { resolveMentions, type MentionResolveFailure } from '../../chat/resolveMentions.js';
+import { renderMentionNames, substituteMentionTokens } from '../../chat/mentionTokens.js';
 import {
   ConfirmRejectedError,
   encodeToken,
@@ -120,10 +121,7 @@ export type SendMessageResult =
   | SendMessageSent
   | { status: 'ambiguous_chat'; candidates: ChatCandidate[] }
   | ChatResolveFailure
-  /* `query` несёт КАКОЕ ИМЕННО @X не разрешилось: упоминаний может быть несколько (§6.4) */
-  | { status: 'ambiguous_mention'; query: string; candidates: MentionCandidate[] }
-  | { status: 'mention_not_in_chat'; query: string; guid: string; chat_id: string }
-  | { status: 'mention_not_found'; query: string };
+  | MentionResolveFailure;
 
 
 /**
@@ -192,57 +190,10 @@ export function sendFingerprint(input: SendPayloadInput): string {
   return fingerprint('send', buildSendPayload(input));
 }
 
-/** Итог резолва всех упоминаний draft: либо кандидаты и пары, либо готовый отказ наружу */
-type MentionsOutcome =
-  | { status: 'ok'; candidates: MentionCandidate[]; pairs: MentionPair[] }
-  | { status: 'fail'; result: SendMessageResult };
-
-/**
- * Резолвит каждый запрос упоминания на DRAFT и схлопывает дубли по guid с сохранением
- * первого вхождения (зеркально `buildMentions`, §6.1 правило 3). Первый неразрешённый -
- * немедленный отказ наружу: неоднозначность блокирует отправку, а не угадывает (P2/AC-3).
- *
- * Возвращает ДВА поля с разным назначением. `candidates` схлопнуты по guid и кормят отпечаток и
- * `draft.mentions[]`. `pairs` собираются МИМО дедупа, по элементу на каждый запрос: два разных
- * запроса-синонима, схлопнувшихся в один guid, обязаны быть подставлены ОБА, иначе при
- * `text:'@Ваня и @Иван'` половина текста ушла бы в необратимое сообщение неподставленной.
- */
-async function resolveMentions(deps: ToolDeps, chatId: string, queries: string[]): Promise<MentionsOutcome> {
-  const candidates: MentionCandidate[] = [];
-  const pairs: MentionPair[] = [];
-  const seen = new Set<string>();
-  for (const query of queries) {
-    const resolved = await resolveMention(query, {
-      http: deps.http,
-      logger: deps.logger,
-      chatId,
-      searchLimit: deps.config.limits.searchDefaultLimit,
-    });
-    if (resolved.status === 'ambiguous') {
-      deps.logger.info('send_message: упоминание неоднозначно', { candidates: resolved.candidates.length });
-      return { status: 'fail', result: { status: 'ambiguous_mention', query, candidates: resolved.candidates } };
-    }
-    if (resolved.status === 'not_in_chat') {
-      deps.logger.info('send_message: упоминание вне чата');
-      return { status: 'fail', result: { status: 'mention_not_in_chat', query, guid: resolved.guid, chat_id: chatId } };
-    }
-    if (resolved.status === 'not_found') {
-      deps.logger.info('send_message: упоминание не найдено');
-      return { status: 'fail', result: { status: 'mention_not_found', query } };
-    }
-    pairs.push({ query, guid: resolved.guid });
-    if (!seen.has(resolved.guid)) {
-      seen.add(resolved.guid);
-      candidates.push({ guid: resolved.guid, ...(resolved.name !== undefined ? { name: resolved.name } : {}) });
-    }
-  }
-  return { status: 'ok', candidates, pairs };
-}
-
 /**
  * Перечитывает цель reply через `message_info` и собирает цитату ИЗ ОТВЕТА СЕРВЕРА (§6.2):
  * цитата выдаёт себя за чужие слова, поэтому берётся с сервера, а не из ввода вызывающего -
- * иначе можно было бы приписать собеседнику несказанное. Один WS-read; `editMessage.ts:83-88`
+ * иначе можно было бы приписать собеседнику несказанное. Один WS-read; `editMessage.ts:194-199`
  * строит превью тем же перечитыванием. Цель без текста (картинка/файл) цитаты не даёт - undefined.
  */
 async function readReplyQuote(
@@ -285,9 +236,14 @@ export async function sendMessage(deps: ToolDeps, input: SendMessageInput): Prom
 
   if (input.confirm !== true) {
     /* Резолв упоминаний идёт ТОЛЬКО на draft (ось D1): неоднозначность блокирует отправку */
-    const mentions = await resolveMentions(deps, resolved.chat_id, input.mentions ?? []);
+    const mentions = await resolveMentions(input.mentions ?? [], {
+      http: deps.http,
+      logger: deps.logger,
+      chatId: resolved.chat_id,
+      searchLimit: deps.config.limits.searchDefaultLimit,
+    });
     if (mentions.status === 'fail') {
-      return mentions.result;
+      return mentions.failure;
     }
     const guids = mentions.candidates.map((candidate) => candidate.guid);
     /*
@@ -315,7 +271,7 @@ export async function sendMessage(deps: ToolDeps, input: SendMessageInput): Prom
     const textPreview =
       substitution.substituted > 0 ? renderMentionNames(substitution.text, mentions.candidates) : undefined;
     /*
-     * Превью цитаты reply - перечитыванием цели с сервера (§6.2, образец editMessage.ts:83-88).
+     * Превью цитаты reply - перечитыванием цели с сервера (§6.2, образец editMessage.ts:194-199).
      * Цитата информационна: в отпечаток не входит и обратно на confirm не предъявляется, поэтому
      * легальная правка цели между draft и confirm отправку НЕ отвергает. Forward цитаты не несёт.
      */
