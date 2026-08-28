@@ -20,6 +20,7 @@
  * определена (спайк 1): это честный отказ с причиной, а не тихая пустая выдача.
  */
 import { resolveChat, type ChatCandidate } from '../../chat/resolveChat.js';
+import { buildChatResolveFailure, type ChatResolveFailure } from '../../chat/resolveFailure.js';
 import type { EnrichedMessage } from '../../protocol/enrichMessage.js';
 import type { Message } from '../../protocol/messageShape.js';
 import { buildThreadId, isThreadId, parseThreadId } from '../../protocol/threadId.js';
@@ -55,7 +56,7 @@ export type GetThreadResult =
     }
   | { status: 'thread_unsupported'; parent_chat_id: string; reason: string }
   | { status: 'ambiguous_chat'; candidates: ChatCandidate[] }
-  | { status: 'chat_not_found'; query: string }
+  | ChatResolveFailure
   | { status: 'invalid_input'; reason: string };
 
 export const DEFAULT_THREAD_LIMIT = 40;
@@ -137,7 +138,7 @@ async function resolveThreadId(deps: ToolDeps, input: GetThreadInput, myGuid: st
     return { kind: 'result', result: { status: 'ambiguous_chat', candidates: resolved.candidates } };
   }
   if (resolved.status === 'not_found') {
-    return { kind: 'result', result: { status: 'chat_not_found', query: input.chat } };
+    return { kind: 'result', result: buildChatResolveFailure({ query: input.chat, reason: 'name_not_found' }) };
   }
 
   /* «Обсудить»: деривируем thread_id из родительского чата и метки родительского сообщения */

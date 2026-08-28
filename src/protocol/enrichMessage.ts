@@ -1,11 +1,16 @@
 /**
  * Обогащение прочитанного сообщения (Fork D1, §11.2/§9.1).
  *
- * ПОЧЕМУ ОТДЕЛЬНАЯ ФУНКЦИЯ, А НЕ ПРАВКА `normalizeMessage`. Выход v1-нормализатора
- * (`messageShape.ts`) заморожен байт-в-байт: на его форму завязана регрессия v1
- * (`toEqual` в `messageShape.test.ts`). Обогащение приезжает НОВОЙ функцией поверх
- * немутируемого `base` и добавляет top-level ключи. ИНВАРИАНТ: v1-объект (`Message`) остаётся
- * структурным подмножеством выхода - каждый v1-ключ на месте с тем же значением.
+ * ПОЧЕМУ ОТДЕЛЬНАЯ ФУНКЦИЯ, А НЕ ПРАВКА `normalizeMessage`. Обогащение приезжает НОВОЙ
+ * функцией поверх немутируемого `base` и добавляет top-level ключи. ИНВАРИАНТ, который
+ * действует и сегодня: v1-объект (`Message`) остаётся структурным подмножеством выхода -
+ * каждый v1-ключ на месте с тем же значением, и слой обогащения ни одного из них не переписывает.
+ *
+ * ЗАМОРОЗКА ЗНАЧЕНИЙ СНЯТА, И ЭТО САНКЦИОНИРОВАНО. Прежняя редакция шапки утверждала, что
+ * выход v1-нормализатора заморожен байт-в-байт. Это перестало быть верным: `kind` удалённого
+ * сообщения разведён с `'unknown'` в собственное `'deleted'` (`messageShape.ts`, санкция AC-14).
+ * Цена посчитана и уплачена - один ассерт в `messageShape.test.ts`. Структурная часть инварианта
+ * (v1 ⊆ выход) при этом цела: она проверяется машинно и ничем не санкционирована к снятию.
  *
  * ГРАНИЦА ИНВАРИАНТА (P1, P5). Подмножество гарантируется ТОЛЬКО для v1-ключей `Message`. Слой
  * обогащения (reactions/reads/mentions/thread/forwarded/from_me) - это v2-контракт, и он НЕ
@@ -313,12 +318,40 @@ function buildThread(siblings: Record<string, unknown>): ThreadInfo {
   };
 }
 
+/**
+ * Приводит элемент `ForwardedMessages` к форме, которую понимает v1-нормализатор.
+ *
+ * ЖИВОЙ КАДР 2026-08-28 (`docs/spikes/v2/SPIKE-FORWARD-FRAME.md`): элемент приходит как
+ * `{Payload, ServerMessageInfo}`, где `Payload` - это САМО ТЕЛО (`Text.MessageText`, `ChatId`,
+ * `PayloadId`, `CustomPayload`), то есть содержимое `ClientMessage.Plain`, а не `ServerMessage`.
+ * Прежние две догадки (`raw` как `ServerMessage` и `raw.ServerMessage`) не совпали с проводом
+ * ни разу - в этом и была причина пустого `forwarded[]` (#22). Обе оставлены запасным разбором
+ * и помечены честно: они ВЫВЕДЕНЫ, живьём не наблюдались.
+ */
+function toServerMessageShape(raw: unknown): unknown {
+  const element = asObject(raw);
+  if (element === undefined) {
+    return undefined;
+  }
+  const payload = asObject(element['Payload']);
+  if (payload !== undefined) {
+    return { ClientMessage: { Plain: payload }, ServerMessageInfo: element['ServerMessageInfo'] };
+  }
+  /*
+   * Запасной разбор СУЖЕН против прежнего: раньше пробовались обе догадки подряд
+   * (`normalizeMessage(raw) ?? normalizeMessage(raw.ServerMessage)`), теперь при наличии
+   * `ServerMessage` сам элемент вторым заходом уже не пробуется. Сужение сознательное:
+   * перебирать формы, ни одна из которых живьём не наблюдалась, значит множить догадки.
+   */
+  return element['ServerMessage'] ?? element;
+}
+
 function buildForwarded(siblings: Record<string, unknown>): ForwardedOriginal[] {
   const rawList = Array.isArray(siblings['ForwardedMessages']) ? siblings['ForwardedMessages'] : [];
   const forwarded: ForwardedOriginal[] = [];
   for (const raw of rawList) {
-    /* Оригинал - тот же ServerMessage: нормализуем его v1-логикой, не переписывая заново */
-    const original = normalizeMessage(raw) ?? normalizeMessage(asObject(raw)?.['ServerMessage']);
+    /* Оригинал разбирается той же v1-логикой: переписывать нормализацию заново незачем */
+    const original = normalizeMessage(toServerMessageShape(raw));
     if (original === undefined) {
       continue;
     }

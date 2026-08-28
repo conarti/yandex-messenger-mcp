@@ -17,6 +17,7 @@
  * `pushMutation` поднимает его внятной ошибкой (§14.6). Своего ограничения тут нет.
  */
 import { resolveChat, type ChatCandidate } from '../../chat/resolveChat.js';
+import { buildChatResolveFailure, type ChatResolveFailure } from '../../chat/resolveFailure.js';
 import { encodeToken, fingerprint, recallResult, rememberResult, verifyConfirmToken, type DraftToken } from '../confirm.js';
 import { buildEditMutation, pushMutation } from '../../protocol/mutations.js';
 import { getMessageInfo } from '../../protocol/messageInfo.js';
@@ -56,7 +57,7 @@ export type EditMessageResult =
   | EditMessageDraft
   | EditMessageEdited
   | { status: 'ambiguous_chat'; candidates: ChatCandidate[] }
-  | { status: 'chat_not_found'; query: string };
+  | ChatResolveFailure;
 
 /** Отпечаток edit-пути: чат + метка цели + новый текст (смена текста инвалидирует токен) */
 function editFingerprint(chatId: string, messageId: string, newText: string): string {
@@ -76,7 +77,7 @@ export async function editMessage(deps: ToolDeps, input: EditMessageInput): Prom
     return { status: 'ambiguous_chat', candidates: resolved.candidates };
   }
   if (resolved.status === 'not_found') {
-    return { status: 'chat_not_found', query: input.chat };
+    return buildChatResolveFailure({ query: input.chat, reason: 'name_not_found' });
   }
 
   if (input.confirm !== true) {

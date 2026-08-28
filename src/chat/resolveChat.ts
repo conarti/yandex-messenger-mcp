@@ -49,11 +49,18 @@ export function isChatId(value: string): boolean {
 }
 
 /**
- * Приватный ChatId - это пара guid через `_` в порядке «собеседник + я» (§5).
+ * Приватный ChatId - это пара guid через `_`, ОТСОРТИРОВАННАЯ по кодовым единицам UTF-16 (§5).
  * Порядок здесь не декоративный: перестановка даёт другую строку, и чат по ней не найдётся.
  */
 export function buildPrivateChatId(partnerGuid: string, myGuid: string): string {
-  return `${partnerGuid}_${myGuid}`;
+  /*
+   * Сравнение обычным `<` (кодовые единицы UTF-16), а не `localeCompare`: у guid, приходящих
+   * сюда (из `getWhoami` и из бакета `users`), нет валидатора регистра, а `localeCompare`
+   * детерминирован лишь относительно локали среды выполнения - на разных машинах при одном и
+   * том же входе он дал бы разный порядок, тогда как итоговый chat_id обязан совпасть с
+   * серверным байт в байт.
+   */
+  return partnerGuid < myGuid ? `${partnerGuid}_${myGuid}` : `${myGuid}_${partnerGuid}`;
 }
 
 /** Элемент бакета `chats`: `{data:{chat_id, name, ...}, ...}` (живой захват 2026-07-17) */
@@ -80,7 +87,7 @@ function toChatCandidate(item: unknown): ChatCandidate | undefined {
  * ChatId `<myGuid>_<myGuid>` - даже если `data.chat_id` в выдаче поиска отсутствует.
  *
  * Не-self элемент -> `undefined`: у обычного приватного чата `PartnerInfo.Guid` = собеседник
- * (не я), а `chat_id` = `<собеседник>_<я>` (не `<я>_<я>`). Поэтому резолв не-self чатов эта
+ * (не я), а `chat_id` - пара РАЗНЫХ guid (не `<я>_<я>`). Поэтому резолв не-self чатов эта
  * ветка не меняет - на них она просто не срабатывает и управление уходит в `toChatCandidate`.
  */
 function toSelfChatCandidate(item: unknown, myGuid: string): ChatCandidate | undefined {

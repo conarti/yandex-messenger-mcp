@@ -87,7 +87,17 @@ describe('правка и удаление (§9.2: отдельных типов
     expect(message?.deleted).toBe(true);
     expect(message?.text).toBeUndefined();
     expect(message?.attachments).toEqual([]);
+    /* Собственное значение вместо общего `'unknown'` (AC-14): удалённое отличимо от пустого тела */
+    expect(message?.kind).toBe('deleted');
+  });
+
+  it('тело без content-поля и без Deleted => unknown, а не deleted', () => {
+    const message = normalizeMessage(
+      serverMessage({ clientMessage: { Plain: { ChatId: 'guid-a_guid-b', PayloadId: 'payload-1' } } }),
+    );
+
     expect(message?.kind).toBe('unknown');
+    expect(message?.deleted).toBe(false);
   });
 });
 

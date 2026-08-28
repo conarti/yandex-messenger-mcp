@@ -45,6 +45,20 @@ const APPLICATION_HINTS: Record<number, string> = {
   [ResponseStatus.UNAUTHORIZED]: 'запрос не авторизован - сессия могла протухнуть',
 };
 
+/**
+ * `details` пришёл из нашего словаря расшифровок, а не с сервера.
+ *
+ * `mapResponseStatus` кладёт в `details` серверный `Details`, а при его отсутствии - словарную
+ * расшифровку кода; по самой строке одно от другого не отличить. Наружу отдан предикат, а не
+ * словарь: открывать общий справочник расшифровок ради одной сверки незачем, а дублировать
+ * литерал хинта в двух файлах - значит завести вторую копию, которая разъедется.
+ *
+ * Отсутствующий `details` тоже считается «не серверным текстом»: сервер ничего не сказал.
+ */
+export function isDefaultApplicationHint(code: number, details: string | undefined): boolean {
+  return details === undefined || details === APPLICATION_HINTS[code];
+}
+
 const PUSH_HINTS: Record<number, string> = {
   [PushCommitStatus.UNCOMMMITED]: 'сервер не подтвердил запись',
   [PushCommitStatus.UNIPROXY_COMMITTED]: 'принято прокси, но запись НЕ подтверждена - успехом не считаем',

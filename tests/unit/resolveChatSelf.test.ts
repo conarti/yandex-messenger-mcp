@@ -57,12 +57,12 @@ describe('ветка self НЕ меняет резолв не-self чатов', 
     });
   });
 
-  it('один пользователь (не я) - тот же приватный ChatId собеседник_я, что в v1', async () => {
+  it('один пользователь (не я) - тот же приватный ChatId из отсортированной пары, что в v1', async () => {
     const { deps: d } = deps({ chats: [], users: [userItem(PARTNER_GUID, 'Иван')] });
 
     expect(await resolveChat('Иван', d)).toEqual({
       status: 'resolved',
-      chat_id: `${PARTNER_GUID}_${MY_GUID}`,
+      chat_id: `${MY_GUID}_${PARTNER_GUID}`,
       via: 'user_search',
       name: 'Иван',
     });

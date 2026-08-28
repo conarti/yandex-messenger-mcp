@@ -18,7 +18,23 @@ import { extractAttachmentRefs, type AttachmentRef } from './attachmentRefs.js';
 /** Content-поля тела Plain (§11.1). Ровно одно на сообщение */
 const CONTENT_KINDS = ['Text', 'Sticker', 'Image', 'MiscFile', 'Card', 'Gallery', 'Voice', 'Poll'] as const;
 
-export type MessageKind = 'text' | 'sticker' | 'image' | 'file' | 'card' | 'gallery' | 'voice' | 'poll' | 'system' | 'unknown';
+/**
+ * `'deleted'` разведён с `'unknown'` (AC-14). До этого одно значение покрывало три разных
+ * случая, и удалённое сообщение было неотличимо от пересылки без своего тела. Теперь
+ * `'unknown'` означает строго «тела нет либо content-поля нет» (`resolveBody` `:130`, `:135`).
+ */
+export type MessageKind =
+  | 'text'
+  | 'sticker'
+  | 'image'
+  | 'file'
+  | 'card'
+  | 'gallery'
+  | 'voice'
+  | 'poll'
+  | 'system'
+  | 'deleted'
+  | 'unknown';
 
 const KIND_BY_CONTENT: Record<(typeof CONTENT_KINDS)[number], MessageKind> = {
   Text: 'text',
@@ -126,7 +142,12 @@ function resolveBody(clientMessage: Record<string, unknown>): {
         return { body: plain, kind: KIND_BY_CONTENT[content] };
       }
     }
-    /* Тело есть, но content-поля нет - штатный вид удалённого сообщения (§9.2) */
+    /*
+     * Тело есть, content-поля нет. Живой кадр 2026-08-28 (`docs/spikes/v2/SPIKE-FORWARD-FRAME.md`)
+     * показал штатный источник такого тела: чистая пересылка без собственного комментария несёт
+     * только `ChatId`/`PayloadId`/`CustomPayload`, а содержимое лежит в сиблинге `ForwardedMessages`.
+     * Удалённое сюда БОЛЬШЕ не относится - оно перекрывается флагом на выдаче.
+     */
     return { body: plain, kind: 'unknown' };
   }
   if (clientMessage['SystemMessage'] !== undefined) {
@@ -194,8 +215,12 @@ export function normalizeMessage(serverMessage: unknown): Message | undefined {
     timestamp_mcs: micros.toString(),
     ...(typeof info['SeqNo'] === 'number' ? { seq_no: info['SeqNo'] } : {}),
     from: { guid: fromGuid ?? '', ...(fromName !== undefined ? { name: fromName } : {}) },
-    /* У удалённого тело пустое, поэтому вид берём из флага, а не из отсутствующего content-поля */
-    kind: deleted ? 'unknown' : kind,
+    /*
+     * У удалённого тело пустое, поэтому вид берём из флага. Значение СОБСТВЕННОЕ, а не общее
+     * `'unknown'`: иначе удалённое сливается с пересылкой без своего тела, и вызывающему нечем
+     * их различить (баг #22). Мост миграции для тех, кто читал `kind:'unknown'`, - поле `deleted`.
+     */
+    kind: deleted ? 'deleted' : kind,
     ...(text !== undefined ? { text } : {}),
     attachments: deleted ? [] : extractAttachmentRefs(body),
     ...(context !== undefined ? { context } : {}),

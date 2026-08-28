@@ -5,9 +5,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../../src/config/loadConfig.js';
 import { loadReactionMap } from '../../src/config/reactionMap.js';
+import { mapResponseStatus } from '../../src/protocol/errors.js';
 import { createLogger } from '../../src/util/logger.js';
 import type { ToolDeps } from '../../src/mcp/tools/deps.js';
 import { getHistory } from '../../src/mcp/tools/getHistory.js';
+import { getMessage } from '../../src/mcp/tools/getMessage.js';
+import { getMessageContext } from '../../src/mcp/tools/getMessageContext.js';
 import { listChats } from '../../src/mcp/tools/listChats.js';
 import { search } from '../../src/mcp/tools/search.js';
 import { mkdtempSync } from 'node:fs';
@@ -16,6 +19,21 @@ import { join } from 'node:path';
 
 const MY_GUID = 'aaaaaaaa-1111-2222-3333-444444444444';
 const CHAT_ID = 'bbbbbbbb-5555-6666-7777-888888888888_aaaaaaaa-1111-2222-3333-444444444444';
+/** Метка-пивот для get_message_context/get_message: 16 цифр (§5), значение синтетическое */
+const PIVOT_TIMESTAMP = '1784287503814009';
+
+/** Отказ бэкенда ENTITY_NOT_FOUND(4) ровно в форме, которую транспорт мапит из DATA-кадра (§14.6) */
+function entityNotFound(method: string, details?: string) {
+  const error = mapResponseStatus(method, {
+    Status: 4,
+    RequestId: 'e4e4e4e4-9999-5555-aaaa-111122223333',
+    ...(details !== undefined ? { Details: details } : {}),
+  });
+  if (error === undefined) {
+    throw new Error('фикстура не собрала ошибку');
+  }
+  return error;
+}
 
 const config = loadConfig({ configDir: mkdtempSync(join(tmpdir(), 'ymm-readtools-')) });
 const logger = createLogger({ level: 'error' });
@@ -39,18 +57,20 @@ function makeDeps(overrides: { wsRequest?: unknown; httpCall?: unknown } = {}): 
   deps: ToolDeps;
   wsRequest: ReturnType<typeof vi.fn>;
   httpCall: ReturnType<typeof vi.fn>;
+  getWhoami: ReturnType<typeof vi.fn>;
 } {
   const wsRequest = vi.fn(overrides.wsRequest as never);
   const httpCall = vi.fn(overrides.httpCall as never);
+  const getWhoami = vi.fn(async () => ({ uid: '123', guid: MY_GUID }));
   const deps = {
     ws: { request: wsRequest },
     http: { call: httpCall },
-    auth: { getWhoami: async () => ({ uid: '123', guid: MY_GUID }) },
+    auth: { getWhoami },
     config,
     logger,
     reactionMap: loadReactionMap(),
   } as unknown as ToolDeps;
-  return { deps, wsRequest, httpCall };
+  return { deps, wsRequest, httpCall, getWhoami };
 }
 
 describe('list_chats', () => {
@@ -309,6 +329,93 @@ describe('get_history', () => {
 
     expect(result.status).toBe('chat_not_found');
   });
+
+  /*
+   * #18/AC-21 через инструмент целиком, а не только на хелпере (resolveFailure.test.ts): у
+   * `history` адресуемая сущность ровно одна - чат, поэтому ENTITY_NOT_FOUND(4) от мок-WS
+   * обязан прийти вызывающему единой формой отказа, а не сырой MessengerError.
+   */
+  it('ENTITY_NOT_FOUND(4) на history -> единая форма отказа резолва чата (getHistory.ts:107)', async () => {
+    const { deps, wsRequest } = makeDeps({
+      wsRequest: async () => {
+        throw entityNotFound('history', 'no such chat');
+      },
+    });
+
+    const result = await getHistory(deps, { chat: CHAT_ID, limit: 40 });
+
+    expect(result).toMatchObject({ status: 'chat_not_found', reason: 'backend_entity_not_found', candidates: [] });
+    if (result.status !== 'chat_not_found') throw new Error('ожидался отказ резолва');
+    expect(result.next_step).toContain('list_chats');
+    expect(wsRequest).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('get_message_context: ENTITY_NOT_FOUND(4) на history -> единая форма отказа (AC-21)', () => {
+  /* Сторона «до» (getMessageContext.ts:94) - выполняется всегда, до неё окно не строится вовсе */
+  it('код 4 на стороне «до» даёт chat_not_found; сторона «после» не запрашивается', async () => {
+    const { deps, wsRequest } = makeDeps({
+      wsRequest: async () => {
+        throw entityNotFound('history', 'no such chat');
+      },
+    });
+
+    const result = await getMessageContext(deps, { chat: CHAT_ID, message_id: PIVOT_TIMESTAMP, after: 5 });
+
+    expect(result).toMatchObject({ status: 'chat_not_found', reason: 'backend_entity_not_found', candidates: [] });
+    if (result.status !== 'chat_not_found') throw new Error('ожидался отказ резолва');
+    expect(result.next_step).toContain('list_chats');
+    /* Отказ пришёл на первом же вызове history - до второго дело не дошло */
+    expect(wsRequest).toHaveBeenCalledTimes(1);
+  });
+
+  /*
+   * Сторона «после» (getMessageContext.ts:118) собирается ТОЛЬКО при after>0 - без явного
+   * after>0 ветка была бы условной, и перехват там остался бы непроверенным (вакуумный ассерт).
+   * Поэтому сторона «до» здесь нарочно отвечает успехом, а падает именно второй вызов.
+   */
+  it('код 4 на стороне «после» (after>0) тоже даёт chat_not_found', async () => {
+    let call = 0;
+    const { deps, wsRequest } = makeDeps({
+      wsRequest: async () => {
+        call += 1;
+        if (call === 1) {
+          return { Chats: [{ ChatId: CHAT_ID, Messages: [] }] };
+        }
+        throw entityNotFound('history', 'no such chat');
+      },
+    });
+
+    const result = await getMessageContext(deps, { chat: CHAT_ID, message_id: PIVOT_TIMESTAMP, after: 5 });
+
+    expect(result).toMatchObject({ status: 'chat_not_found', reason: 'backend_entity_not_found', candidates: [] });
+    if (result.status !== 'chat_not_found') throw new Error('ожидался отказ резолва');
+    expect(result.next_step).toContain('list_chats');
+    /* Оба вызова history реально произошли: первый - сторона «до» (успех), второй - перехваченный */
+    expect(wsRequest).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('get_message: код 4 на message_info НЕ подменяется отказом резолва чата (AC-21, главный дефект)', () => {
+  /*
+   * `get_message` адресует message_info двумя сущностями сразу - чатом И сообщением
+   * (ChatId+Timestamp): requestChatAddressed тут намеренно не применяется (предпосылка П1
+   * не выполняется), поэтому ENTITY_NOT_FOUND(4) обязан всплыть как есть - иначе отказ по
+   * несуществующему СООБЩЕНИЮ в существующем чате выглядел бы как «чат не найден».
+   */
+  it('ENTITY_NOT_FOUND(4) на message_info пробрасывается как MessengerError, а не chat_not_found', async () => {
+    const { deps } = makeDeps({
+      wsRequest: async () => {
+        throw entityNotFound('message_info', 'сообщение удалено');
+      },
+    });
+
+    await expect(getMessage(deps, { chat: CHAT_ID, message_id: PIVOT_TIMESTAMP })).rejects.toMatchObject({
+      layer: 'application',
+      code: 4,
+      codeName: 'ENTITY_NOT_FOUND',
+    });
+  });
 });
 
 describe('search', () => {
@@ -342,8 +449,32 @@ describe('search', () => {
 
     const result = await search(deps, { query: 'x', entities: ['users', 'chats'] });
 
-    expect(result.users).toEqual([{ guid: 'g1', name: 'Иван' }]);
+    /* chat_id для человека сконструирован из пары guid (§5): партнёр 'g1' < MY_GUID нет,
+     * значит порядок пары - мой guid первым */
+    expect(result.users).toEqual([
+      { guid: 'g1', chat_id: `${MY_GUID}_g1`, chat_id_via: 'user_search', name: 'Иван' },
+    ]);
     expect(result.chats).toEqual([{ chat_id: '0/0/x', name: 'Команда', members_count: 3 }]);
+  });
+
+  it('entities без users не тянет getWhoami: своего guid для сообщений не нужно', async () => {
+    const { deps, getWhoami } = makeDeps({
+      httpCall: async () => ({ messages: { items: [], total: 0, limit: 50 } }),
+    });
+
+    await search(deps, { query: 'x', entities: ['messages'] });
+
+    expect(getWhoami).not.toHaveBeenCalled();
+  });
+
+  it('entities с users тянет getWhoami: без него chat_id для человека не собрать', async () => {
+    const { deps, getWhoami } = makeDeps({
+      httpCall: async () => ({ users: { items: [{ data: { guid: 'g1' } }], total: 1, limit: 50 } }),
+    });
+
+    await search(deps, { query: 'x', entities: ['users'] });
+
+    expect(getWhoami).toHaveBeenCalledTimes(1);
   });
 
   it('эскалация сюрфейсится наружу', async () => {

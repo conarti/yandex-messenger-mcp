@@ -17,6 +17,7 @@
  * от повтора в пределах сессии - локальная память `recallResult`.
  */
 import { resolveChat, type ChatCandidate } from '../../chat/resolveChat.js';
+import { buildChatResolveFailure, type ChatResolveFailure } from '../../chat/resolveFailure.js';
 import { encodeToken, fingerprint, recallResult, rememberResult, verifyConfirmToken, type DraftToken } from '../confirm.js';
 import { buildVoteMutation, pushMutation } from '../../protocol/mutations.js';
 import type { ToolDeps } from './deps.js';
@@ -60,7 +61,7 @@ export type VoteInPollResult =
   | VoteInPollDraft
   | VoteInPollVoted
   | { status: 'ambiguous_chat'; candidates: ChatCandidate[] }
-  | { status: 'chat_not_found'; query: string };
+  | ChatResolveFailure;
 
 /** Отпечаток vote-пути: чат + метка опроса + выбор (смена выбора инвалидирует токен) */
 function voteFingerprint(chatId: string, messageId: string, choices: number[]): string {
@@ -80,7 +81,7 @@ export async function voteInPoll(deps: ToolDeps, input: VoteInPollInput): Promis
     return { status: 'ambiguous_chat', candidates: resolved.candidates };
   }
   if (resolved.status === 'not_found') {
-    return { status: 'chat_not_found', query: input.chat };
+    return buildChatResolveFailure({ query: input.chat, reason: 'name_not_found' });
   }
 
   if (input.confirm !== true) {

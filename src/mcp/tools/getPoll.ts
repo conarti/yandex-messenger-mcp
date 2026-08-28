@@ -12,6 +12,7 @@
  * возвращается `not_a_poll`, а пустая структура за опрос не выдаётся.
  */
 import { resolveChat, type ChatCandidate } from '../../chat/resolveChat.js';
+import { buildChatResolveFailure, type ChatResolveFailure } from '../../chat/resolveFailure.js';
 import { NotAPollError, readPoll, type PollInfoResult } from '../../protocol/poll.js';
 import type { ToolDeps } from './deps.js';
 
@@ -25,7 +26,7 @@ export type GetPollResult =
   | ({ status: 'ok'; chat_id: string; message_id: string } & PollInfoResult)
   | { status: 'not_a_poll'; chat_id: string; message_id: string }
   | { status: 'ambiguous_chat'; candidates: ChatCandidate[] }
-  | { status: 'chat_not_found'; query: string };
+  | ChatResolveFailure;
 
 export async function getPoll(deps: ToolDeps, input: GetPollInput): Promise<GetPollResult> {
   const { guid } = await deps.auth.getWhoami();
@@ -40,7 +41,7 @@ export async function getPoll(deps: ToolDeps, input: GetPollInput): Promise<GetP
     return { status: 'ambiguous_chat', candidates: resolved.candidates };
   }
   if (resolved.status === 'not_found') {
-    return { status: 'chat_not_found', query: input.chat };
+    return buildChatResolveFailure({ query: input.chat, reason: 'name_not_found' });
   }
 
   try {

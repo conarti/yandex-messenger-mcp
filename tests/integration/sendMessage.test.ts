@@ -365,9 +365,10 @@ describe('упоминания: резолв только на draft (ось D1,
     const guids = draftResult.mentions.map((mention) => mention.guid);
     const httpCallsAfterDraft = httpCall.mock.calls.length;
 
+    /* Эхом возвращается КАНОНИЧЕСКИЙ draft.text - он уже несёт токен, и отпечаток совпадает */
     const result = (await sendMessage(deps, {
       chat: CHAT_ID,
-      text: 'привет @Иван',
+      text: draftResult.text,
       mentions: guids,
       confirm: true,
       confirm_token: draftResult.confirm_token,
@@ -379,7 +380,13 @@ describe('упоминания: резолв только на draft (ось D1,
     const frames = mock.requestsOf('push');
     expect(frames).toHaveLength(1);
     const plain = (frames[0]?.payload['ClientMessage'] as { Plain: Record<string, unknown> }).Plain;
-    expect(plain).toMatchObject({ ChatId: CHAT_ID, Text: { MessageText: 'привет @Иван' }, MentionedUserIds: guids });
+    /* На провод уходит именно draft.text, а НЕ превью: ассерт явный, иначе он двусмыслен */
+    expect(plain).toMatchObject({
+      ChatId: CHAT_ID,
+      Text: { MessageText: `привет @${PARTNER_GUID}` },
+      MentionedUserIds: guids,
+    });
+    expect(draftResult.text).toBe(`привет @${PARTNER_GUID}`);
   });
 
   it('confirm с guid не в формате -> malformed_guid до отпечатка, push не уходит', async () => {
@@ -397,6 +404,93 @@ describe('упоминания: резолв только на draft (ось D1,
       }),
     ).rejects.toThrow(/malformed_guid/);
     expect(mock.requestsOf('push')).toHaveLength(0);
+  });
+});
+
+describe('подстановка токена упоминания и поле превью (#15, П-3)', () => {
+  function userBucket(items: unknown[]) {
+    return { users: { items, total: items.length, limit: 50 } };
+  }
+
+  const ivanBucket = () => userBucket([{ data: { guid: PARTNER_GUID, display_name: 'Иван' } }]);
+
+  it('каждый @<guid> из draft.text присутствует в draft.mentions[].guid', async () => {
+    deps = makeDeps(ivanBucket());
+
+    const result = await sendMessage(deps, { chat: CHAT_ID, text: 'привет @Иван и снова @Иван', mentions: ['Иван'] });
+
+    if (result.status !== 'draft') throw new Error('ожидался draft');
+    const inText = [...result.text.matchAll(/@([0-9a-f-]{36})/g)].map((match) => match[1]);
+    const declared = new Set(result.mentions.map((mention) => mention.guid));
+    expect(inText).toHaveLength(2);
+    /* Порядки независимы по построению: сверяется принадлежность составу, а не совпадение позиций */
+    expect(inText.every((guid) => guid !== undefined && declared.has(guid))).toBe(true);
+  });
+
+  it('text_preview показывает имена и присутствует, когда подстановка применилась', async () => {
+    deps = makeDeps(ivanBucket());
+
+    const result = await sendMessage(deps, { chat: CHAT_ID, text: 'привет @Иван', mentions: ['Иван'] });
+
+    if (result.status !== 'draft') throw new Error('ожидался draft');
+    expect(result.text).toBe(`привет @${PARTNER_GUID}`);
+    expect(result.text_preview).toBe('привет @Иван');
+    expect(result.next_step).toContain('эхом возвращайте text, а не text_preview');
+  });
+
+  it('text_preview отсутствует, когда названный запрос в тексте не встретился', async () => {
+    deps = makeDeps(ivanBucket());
+
+    const result = await sendMessage(deps, { chat: CHAT_ID, text: 'привет всем', mentions: ['Иван'] });
+
+    if (result.status !== 'draft') throw new Error('ожидался draft');
+    expect(result.text).toBe('привет всем');
+    expect(result).not.toHaveProperty('text_preview');
+    expect(result.next_step).not.toContain('text_preview');
+  });
+
+  it('эхо text_preview вместо text на confirm -> fingerprint_mismatch, push не уходит', async () => {
+    deps = makeDeps(ivanBucket());
+    const draftResult = await sendMessage(deps, { chat: CHAT_ID, text: 'привет @Иван', mentions: ['Иван'] });
+    if (draftResult.status !== 'draft') throw new Error('ожидался draft');
+    const preview = draftResult.text_preview;
+    if (preview === undefined) throw new Error('ожидалось text_preview');
+
+    await expect(
+      sendMessage(deps, {
+        chat: CHAT_ID,
+        text: preview,
+        mentions: draftResult.mentions.map((mention) => mention.guid),
+        confirm: true,
+        confirm_token: draftResult.confirm_token,
+      }),
+    ).rejects.toThrow(/fingerprint_mismatch/);
+    expect(mock.requestsOf('push')).toHaveLength(0);
+  });
+
+  it('два разных запроса в один guid подставляются ОБА, состав упоминаний остаётся схлопнутым', async () => {
+    /* Мок поиска отдаёт того же человека на любой запрос: `Ваня` и `Иван` схлопываются в один guid */
+    deps = makeDeps(ivanBucket());
+
+    const result = await sendMessage(deps, {
+      chat: CHAT_ID,
+      text: '@Ваня и @Иван',
+      mentions: ['Ваня', 'Иван'],
+    });
+
+    if (result.status !== 'draft') throw new Error('ожидался draft');
+    expect(result.text).toBe(`@${PARTNER_GUID} и @${PARTNER_GUID}`);
+    expect(result.mentions).toEqual([{ guid: PARTNER_GUID, name: 'Иван' }]);
+  });
+
+  it('текст без названных упоминаний уходит байт в байт, превью не появляется', async () => {
+    deps = makeDeps(userBucket([]));
+
+    const result = await sendMessage(deps, { chat: CHAT_ID, text: 'пиши на ivan@yandex.ru, @channel' });
+
+    if (result.status !== 'draft') throw new Error('ожидался draft');
+    expect(result.text).toBe('пиши на ivan@yandex.ru, @channel');
+    expect(result).not.toHaveProperty('text_preview');
   });
 });
 

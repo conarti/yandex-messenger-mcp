@@ -15,6 +15,7 @@
  * через маппер §14.6. Своего ограничения тут нет - решает сервер.
  */
 import { resolveChat, type ChatCandidate } from '../../chat/resolveChat.js';
+import { buildChatResolveFailure, type ChatResolveFailure } from '../../chat/resolveFailure.js';
 import { encodeToken, fingerprint, recallResult, rememberResult, verifyConfirmToken, type DraftToken } from '../confirm.js';
 import { buildDeleteMutation, pushMutation } from '../../protocol/mutations.js';
 import { getMessageInfo } from '../../protocol/messageInfo.js';
@@ -60,7 +61,7 @@ export type DeleteMessageResult =
   | DeleteMessageDraft
   | DeleteMessageDeleted
   | { status: 'ambiguous_chat'; candidates: ChatCandidate[] }
-  | { status: 'chat_not_found'; query: string };
+  | ChatResolveFailure;
 
 /** Отпечаток delete-пути: чат + метка цели. Текста нет - удаление адресуется меткой */
 function deleteFingerprint(chatId: string, messageId: string): string {
@@ -80,7 +81,7 @@ export async function deleteMessage(deps: ToolDeps, input: DeleteMessageInput): 
     return { status: 'ambiguous_chat', candidates: resolved.candidates };
   }
   if (resolved.status === 'not_found') {
-    return { status: 'chat_not_found', query: input.chat };
+    return buildChatResolveFailure({ query: input.chat, reason: 'name_not_found' });
   }
 
   if (input.confirm !== true) {

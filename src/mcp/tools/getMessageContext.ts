@@ -17,6 +17,11 @@
  * оно уезжает в `message`, иначе `message` пуст (удалено/отфильтровано), а `before`/`after` целы.
  */
 import { resolveChat, type ChatCandidate } from '../../chat/resolveChat.js';
+import {
+  buildChatResolveFailure,
+  requestChatAddressed,
+  type ChatResolveFailure,
+} from '../../chat/resolveFailure.js';
 import { enrichMessages, type EnrichedMessage } from '../../protocol/enrichMessage.js';
 import { buildHistoryParams, findChatEntry, type HistoryResponse } from '../../protocol/history.js';
 import { includeUpTo, parseMicros } from '../../util/timestamps.js';
@@ -46,7 +51,7 @@ export type GetMessageContextResult =
       after: EnrichedMessage[];
     }
   | { status: 'ambiguous_chat'; candidates: ChatCandidate[] }
-  | { status: 'chat_not_found'; query: string };
+  | ChatResolveFailure;
 
 export const DEFAULT_CONTEXT_WINDOW = 10;
 
@@ -75,17 +80,29 @@ export async function getMessageContext(
     return { status: 'ambiguous_chat', candidates: resolved.candidates };
   }
   if (resolved.status === 'not_found') {
-    return { status: 'chat_not_found', query: input.chat };
+    return buildChatResolveFailure({ query: input.chat, reason: 'name_not_found' });
   }
   const chatId = resolved.chat_id;
   const enrichCtx = { myGuid: guid, reactionMap: deps.reactionMap };
 
-  /* Сторона «до» + сама метка: MaxTimestamp=pivot+1 включает метку, Limit=before+1 берёт её и before предыдущих */
-  const beforeResponse = await deps.ws.request<HistoryResponse>(
-    'history',
-    buildHistoryParams({ chatId, limit: before + 1, maxTimestamp: includeUpTo(pivot) }),
+  /*
+   * Сторона «до» + сама метка: MaxTimestamp=pivot+1 включает метку, Limit=before+1 берёт её и before предыдущих.
+   * Окно строится границами `history`, а не адресом сообщения: существование самой метки вызову не
+   * требуется (несуществующий пивот даёт окно без пивота, поле `message` опционально). Значит,
+   * `ENTITY_NOT_FOUND(4)` здесь может быть только про чат.
+   */
+  const beforeCall = await requestChatAddressed(
+    { addresses: 'chat_only', query: input.chat, resolved },
+    () =>
+      deps.ws.request<HistoryResponse>(
+        'history',
+        buildHistoryParams({ chatId, limit: before + 1, maxTimestamp: includeUpTo(pivot) }),
+      ),
   );
-  const beforeAndPivot = enrichMessages(extractMessages(beforeResponse, chatId), enrichCtx);
+  if (!beforeCall.ok) {
+    return beforeCall.failure;
+  }
+  const beforeAndPivot = enrichMessages(extractMessages(beforeCall.value, chatId), enrichCtx);
 
   let message: EnrichedMessage | undefined;
   let beforeWindow = beforeAndPivot;
@@ -98,11 +115,18 @@ export async function getMessageContext(
   /* Сторона «после»: MinTimestamp=pivot (исключающая) даёт строго новее метки. Пропускаем при after=0 */
   let afterWindow: EnrichedMessage[] = [];
   if (after > 0) {
-    const afterResponse = await deps.ws.request<HistoryResponse>(
-      'history',
-      buildHistoryParams({ chatId, limit: after, minTimestamp: pivot }),
+    const afterCall = await requestChatAddressed(
+      { addresses: 'chat_only', query: input.chat, resolved },
+      () =>
+        deps.ws.request<HistoryResponse>(
+          'history',
+          buildHistoryParams({ chatId, limit: after, minTimestamp: pivot }),
+        ),
     );
-    afterWindow = enrichMessages(extractMessages(afterResponse, chatId), enrichCtx).filter(
+    if (!afterCall.ok) {
+      return afterCall.failure;
+    }
+    afterWindow = enrichMessages(extractMessages(afterCall.value, chatId), enrichCtx).filter(
       (item) => item.timestamp_mcs !== pivotMcs,
     );
   }

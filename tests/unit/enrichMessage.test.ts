@@ -208,6 +208,84 @@ describe('forwarded (§11.2): оригинал в НОВЫЙ ключ forwarded,
   it('пересылки нет -> пустой массив', () => {
     expect(enrich(serverMessage({})).forwarded).toEqual([]);
   });
+
+  /*
+   * НАБЛЮДЕНО ЖИВЬЁМ 2026-08-28 (`docs/spikes/v2/SPIKE-FORWARD-FRAME.md`): элемент приходит
+   * обёрткой `{Payload, ServerMessageInfo}`, где `Payload` - тело. Именно на ней разбор молча
+   * отваливался и `forwarded[]` оставался пустым при непустом сиблинге (#22). Фикстура повторяет
+   * форму провода (два оригинала одним блоком), значения синтетические.
+   */
+  it('живая обёртка {Payload, ServerMessageInfo} -> forwarded наполняется, блок из двух сразу', () => {
+    const wireElement = (timestamp: number, text: string) => ({
+      Payload: {
+        ChatId: 'guid-src-a_guid-src-b',
+        PayloadId: 'payload-src',
+        Text: { MessageText: text },
+      },
+      ServerMessageInfo: {
+        Timestamp: timestamp,
+        SeqNo: 7,
+        Version: 1,
+        PrevTimestamp: 0,
+        From: { Guid: 'guid-author', DisplayName: 'Автор' },
+      },
+    });
+
+    /* Чистая пересылка: у несущего сообщения своего content-поля нет - ровно как на проводе */
+    const carrier = serverMessage({
+      clientMessage: { Plain: { ChatId: 'guid-a_guid-b', PayloadId: 'payload-1' } },
+      siblings: {
+        ForwardedMessages: [
+          wireElement(1784117000000000, 'первый оригинал'),
+          wireElement(1784117007000000, 'второй оригинал'),
+        ],
+      },
+    });
+    const enriched = enrich(carrier);
+
+    expect(enriched.kind).toBe('unknown');
+    expect(enriched.forwarded).toEqual([
+      {
+        source_author: { guid: 'guid-author', name: 'Автор' },
+        source_chat: 'guid-src-a_guid-src-b',
+        source_date: '2026-07-15T12:03:20.000Z',
+        source_date_mcs: '1784117000000000',
+        source_text: 'первый оригинал',
+        attachments: [],
+      },
+      {
+        source_author: { guid: 'guid-author', name: 'Автор' },
+        source_chat: 'guid-src-a_guid-src-b',
+        source_date: '2026-07-15T12:03:27.000Z',
+        source_date_mcs: '1784117007000000',
+        source_text: 'второй оригинал',
+        attachments: [],
+      },
+    ]);
+  });
+
+  /* Вложения оригинала едут тем же путём: `Payload` - обычное тело, `extractAttachmentRefs` его знает */
+  it('живая обёртка: вложение оригинала попадает в forwarded[].attachments', () => {
+    const carrier = serverMessage({
+      clientMessage: { Plain: { ChatId: 'guid-a_guid-b', PayloadId: 'payload-1' } },
+      siblings: {
+        ForwardedMessages: [
+          {
+            Payload: {
+              ChatId: 'guid-src-a_guid-src-b',
+              Image: { FileInfo: { Id2: 'file-2', Name: 'shot.png', Size: 10 } },
+            },
+            ServerMessageInfo: {
+              Timestamp: 1784117000000000,
+              From: { Guid: 'guid-author', DisplayName: 'Автор' },
+            },
+          },
+        ],
+      },
+    });
+
+    expect(enrich(carrier).forwarded[0]?.attachments).toHaveLength(1);
+  });
 });
 
 describe('thread (§9.1): признак треда + корень', () => {

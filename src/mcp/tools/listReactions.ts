@@ -15,6 +15,7 @@
  * сам протокольный `listReactions`, если вызывающий его не передал.
  */
 import { resolveChat, type ChatCandidate } from '../../chat/resolveChat.js';
+import { buildChatResolveFailure, type ChatResolveFailure } from '../../chat/resolveFailure.js';
 import {
   listReactions as fetchReactionsDetail,
   type MessageReactionsDetail,
@@ -35,7 +36,7 @@ export interface ListReactionsInput {
 export type ListReactionsResult =
   | ({ status: 'ok'; chat_id: string } & MessageReactionsDetail)
   | { status: 'ambiguous_chat'; candidates: ChatCandidate[] }
-  | { status: 'chat_not_found'; query: string };
+  | ChatResolveFailure;
 
 export async function listReactions(deps: ToolDeps, input: ListReactionsInput): Promise<ListReactionsResult> {
   const { guid } = await deps.auth.getWhoami();
@@ -49,7 +50,7 @@ export async function listReactions(deps: ToolDeps, input: ListReactionsInput): 
     return { status: 'ambiguous_chat', candidates: resolved.candidates };
   }
   if (resolved.status === 'not_found') {
-    return { status: 'chat_not_found', query: input.chat };
+    return buildChatResolveFailure({ query: input.chat, reason: 'name_not_found' });
   }
 
   const detail = await fetchReactionsDetail(
