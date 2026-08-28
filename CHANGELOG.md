@@ -1,3 +1,10 @@
+## [0.3.1](https://github.com/conarti/yandex-messenger-mcp/compare/v0.3.0...v0.3.1) (2026-08-28)
+
+
+### Bug Fixes
+
+* публикация в npm падала на проверке provenance ([#25](https://github.com/conarti/yandex-messenger-mcp/issues/25)) ([6ed4500](https://github.com/conarti/yandex-messenger-mcp/commit/6ed4500805f354b48623b31727106e7884fee3bd))
+
 # [0.3.0](https://github.com/conarti/yandex-messenger-mcp/compare/v0.2.1...v0.3.0) (2026-08-28)
 
 
