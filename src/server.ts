@@ -350,7 +350,10 @@ export function createServer(options: CreateServerOptions): McpServer {
     'search',
     {
       title: 'Search messenger',
-      description: 'Поиск по сообщениям, пользователям и чатам через HTTP registry.',
+      description:
+        'Поиск по сообщениям, пользователям и чатам через HTTP registry. Найденные сообщения приходят ' +
+        'обогащёнными так же, как в read-инструментах: reads, mentions, reactions, thread, forwarded, from_me. ' +
+        'У найденных людей рядом с guid отдаётся chat_id, которым их можно адресовать.',
       inputSchema: {
         query: z.string().min(1).describe('Поисковый запрос'),
         entities: z
@@ -615,8 +618,8 @@ export function createServer(options: CreateServerOptions): McpServer {
       title: 'Edit message',
       description:
         'Правка своего сообщения в два шага: без confirm возвращает превью «было -> станет» (draft) и НЕ правит; ' +
-        'с confirm:true и confirm_token из превью правит. Правка необратима, поэтому чат, message_id и new_text ' +
-        'на шаге confirm сверяются с подтверждёнными; расхождение отклоняется. Правку чужого сообщения отклоняет ' +
+        'с confirm:true и confirm_token из превью правит. Правка необратима, поэтому чат, message_id, new_text ' +
+        'и состав mentions на шаге confirm сверяются с подтверждёнными; расхождение отклоняется. Правку чужого сообщения отклоняет ' +
         'сервер. После правки сообщение читается с новым текстом и непустым LastEditTimestamp.',
       inputSchema: {
         chat: z.string().min(1).describe('ChatId либо поисковый запрос для резолва чата'),
@@ -624,7 +627,23 @@ export function createServer(options: CreateServerOptions): McpServer {
           .string()
           .regex(/^\d+$/)
           .describe('Timestamp правимого сообщения в микросекундах (строка)'),
-        new_text: z.string().min(1).describe('Новый текст сообщения'),
+        new_text: z
+          .string()
+          .min(1)
+          .describe(
+            'Новый текст сообщения. На шаге draft названные в mentions строки заменяются в тексте на ' +
+              'токены @<guid>; на confirm верните draft.will_text эхом без изменений',
+          ),
+        mentions: z
+          .array(z.string().min(1))
+          .optional()
+          .describe(
+            'НОВЫЙ ПОЛНЫЙ состав упоминаний. БЕЗ этого поля упоминания правимого сообщения ' +
+              'переотправляются как есть; с ним старый состав не подмешивается, а пустой массив стирает ' +
+              'упоминания. На DRAFT - запросы: @Имя, @<guid> или голый guid; резолвятся по каталогу ' +
+              'организации (неоднозначность отклоняет правку). На CONFIRM предъявляются РОВНО те guid, ' +
+              'что вернул draft, в том же порядке: изменение состава/порядка отклонит правку',
+          ),
         confirm: z
           .boolean()
           .optional()

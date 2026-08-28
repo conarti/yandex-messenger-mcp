@@ -65,13 +65,19 @@ function messageInfoResponds(fields: {
   fromGuid?: string;
   deleted?: boolean;
   lastEdit?: number;
+  /** `MentionedUserIds` правимого сообщения: ими проверяется переотправка состава (AC-7) */
+  mentions?: string[];
 } = {}): void {
-  const { text = 'исходный текст', fromGuid = MY_GUID, deleted = false, lastEdit = 0 } = fields;
+  const { text = 'исходный текст', fromGuid = MY_GUID, deleted = false, lastEdit = 0, mentions = [] } = fields;
   mock.responders.set('message_info', (request, connection) =>
     mock.reply(connection, request, {
       Message: {
         ClientMessage: {
-          Plain: { ChatId: CHAT_ID, ...(deleted ? {} : { Text: { MessageText: text } }) },
+          Plain: {
+            ChatId: CHAT_ID,
+            ...(deleted ? {} : { Text: { MessageText: text } }),
+            ...(mentions.length > 0 ? { MentionedUserIds: mentions } : {}),
+          },
         },
         ServerMessageInfo: {
           Timestamp: Number(MESSAGE_ID),
@@ -287,6 +293,213 @@ describe('edit_message: draft «было -> станет» не правит, co
     expect(info.message.text).toBe('новый текст');
     expect(info.message.edited).toBe(true);
     expect(info.message.edited_at).toBeTruthy();
+  });
+});
+
+describe('edit_message: упоминания в правке (#15, симметрия с send)', () => {
+  /** guid, уже упомянутый в правимом сообщении: им проверяется, что старый состав НЕ подмешивается */
+  const OLD_MENTION_GUID = 'ffffffff-3333-4444-5555-666666666666';
+
+  /** Подменяет мок поиска бакетом users: резолв упоминания ходит туда, резолв литерального чата - нет */
+  function userSearchResponds(items: unknown[]): void {
+    deps = {
+      ...makeDeps(),
+      http: { call: vi.fn(async () => ({ users: { items, total: items.length, limit: 50 } })) },
+    } as unknown as ToolDeps;
+  }
+
+  /** Один найденный человек - половина приватного CHAT_ID, поэтому проверка принадлежности проходит */
+  function ivanFound(): void {
+    userSearchResponds([{ data: { guid: PARTNER_GUID, display_name: 'Иван' } }]);
+  }
+
+  /** Plain единственного push-кадра */
+  function pushedPlain(): Record<string, unknown> {
+    return pushClientMessage()['Plain'] as Record<string, unknown>;
+  }
+
+  it('поля mentions нет: упоминания цели переотправляются, выдача draft о них молчит (регресс AC-7)', async () => {
+    messageInfoResponds({ text: 'старый текст', mentions: [OLD_MENTION_GUID] });
+
+    const draft = (await editMessage(deps, {
+      chat: CHAT_ID,
+      message_id: MESSAGE_ID,
+      new_text: 'новый текст',
+    })) as EditMessageDraft;
+
+    /* Состав не заявлен - предъявлять на confirm нечего, поэтому полей о нём в draft нет */
+    expect(draft).not.toHaveProperty('mentions');
+    expect(draft).not.toHaveProperty('will_text_preview');
+    expect(draft.will_text).toBe('новый текст');
+
+    await editMessage(deps, {
+      chat: CHAT_ID,
+      message_id: MESSAGE_ID,
+      new_text: 'новый текст',
+      confirm: true,
+      confirm_token: draft.confirm_token,
+    });
+
+    expect(pushedPlain()).toMatchObject({
+      Text: { MessageText: 'новый текст' },
+      MentionedUserIds: [OLD_MENTION_GUID],
+    });
+  });
+
+  it('поле есть: токен подставлен в will_text, на провод ушёл новый состав, старый не подмешан', async () => {
+    ivanFound();
+    messageInfoResponds({ text: 'старый текст', mentions: [OLD_MENTION_GUID] });
+
+    const draft = (await editMessage(deps, {
+      chat: CHAT_ID,
+      message_id: MESSAGE_ID,
+      new_text: 'привет @Иван',
+      mentions: ['Иван'],
+    })) as EditMessageDraft;
+
+    expect(draft.will_text).toBe(`привет @${PARTNER_GUID}`);
+    expect(draft.mentions).toEqual([{ guid: PARTNER_GUID, name: 'Иван' }]);
+    expect(mock.requestsOf('push')).toHaveLength(0);
+
+    const result = (await editMessage(deps, {
+      chat: CHAT_ID,
+      message_id: MESSAGE_ID,
+      new_text: draft.will_text,
+      mentions: [PARTNER_GUID],
+      confirm: true,
+      confirm_token: draft.confirm_token,
+    })) as EditMessageEdited;
+
+    expect(result.status).toBe('edited');
+    expect(pushedPlain()).toMatchObject({
+      Text: { MessageText: `привет @${PARTNER_GUID}` },
+      MentionedUserIds: [PARTNER_GUID],
+    });
+    /* Заявленный состав целиком заменяет прежний, а не дополняет его */
+    expect(pushedPlain()['MentionedUserIds']).not.toContain(OLD_MENTION_GUID);
+    /* confirm состав не перечитывает: единственное чтение цели сделал draft */
+    expect(mock.requestsOf('message_info')).toHaveLength(1);
+  });
+
+  it('пустой массив mentions стирает упоминания цели', async () => {
+    messageInfoResponds({ text: 'старый текст', mentions: [OLD_MENTION_GUID] });
+
+    const draft = (await editMessage(deps, {
+      chat: CHAT_ID,
+      message_id: MESSAGE_ID,
+      new_text: 'новый текст',
+      mentions: [],
+    })) as EditMessageDraft;
+
+    expect(draft.mentions).toEqual([]);
+
+    await editMessage(deps, {
+      chat: CHAT_ID,
+      message_id: MESSAGE_ID,
+      new_text: 'новый текст',
+      mentions: [],
+      confirm: true,
+      confirm_token: draft.confirm_token,
+    });
+
+    expect(pushedPlain()).not.toHaveProperty('MentionedUserIds');
+  });
+
+  it('draft с пустым составом, подтверждённый БЕЗ поля mentions, отклоняется: это разный провод', async () => {
+    messageInfoResponds({ text: 'старый текст', mentions: [OLD_MENTION_GUID] });
+    const draft = (await editMessage(deps, {
+      chat: CHAT_ID,
+      message_id: MESSAGE_ID,
+      new_text: 'новый текст',
+      mentions: [],
+    })) as EditMessageDraft;
+
+    await expect(
+      editMessage(deps, {
+        chat: CHAT_ID,
+        message_id: MESSAGE_ID,
+        new_text: 'новый текст',
+        confirm: true,
+        confirm_token: draft.confirm_token,
+      }),
+    ).rejects.toThrow(/fingerprint_mismatch/);
+    expect(mock.requestsOf('push')).toHaveLength(0);
+  });
+
+  it('эхо исходного текста с @Имя вместо will_text -> fingerprint_mismatch, push не уходит', async () => {
+    ivanFound();
+    const draft = (await editMessage(deps, {
+      chat: CHAT_ID,
+      message_id: MESSAGE_ID,
+      new_text: 'привет @Иван',
+      mentions: ['Иван'],
+    })) as EditMessageDraft;
+
+    await expect(
+      editMessage(deps, {
+        chat: CHAT_ID,
+        message_id: MESSAGE_ID,
+        new_text: 'привет @Иван',
+        mentions: [PARTNER_GUID],
+        confirm: true,
+        confirm_token: draft.confirm_token,
+      }),
+    ).rejects.toThrow(/fingerprint_mismatch/);
+    expect(mock.requestsOf('push')).toHaveLength(0);
+  });
+
+  it('неоднозначное @Имя отклоняет правку целиком: ни токена, ни чтения цели, ни push', async () => {
+    userSearchResponds([
+      { data: { guid: PARTNER_GUID, display_name: 'Иван П.' } },
+      { data: { guid: OLD_MENTION_GUID, display_name: 'Иван С.' } },
+    ]);
+
+    const result = await editMessage(deps, {
+      chat: CHAT_ID,
+      message_id: MESSAGE_ID,
+      new_text: 'привет @Иван',
+      mentions: ['Иван'],
+    });
+
+    expect(result.status).toBe('ambiguous_mention');
+    if (result.status !== 'ambiguous_mention') throw new Error('ожидался ambiguous_mention');
+    expect(result.query).toBe('Иван');
+    expect(result.candidates.map((candidate) => candidate.guid)).toEqual([PARTNER_GUID, OLD_MENTION_GUID]);
+    expect(result).not.toHaveProperty('confirm_token');
+    /* Отказ наступает до чтения цели: неоднозначность не стоит ни одного кадра */
+    expect(mock.requestsOf('message_info')).toHaveLength(0);
+    expect(mock.requestsOf('push')).toHaveLength(0);
+  });
+
+  it('will_text_preview показывает имена, когда подстановка применилась', async () => {
+    ivanFound();
+
+    const draft = (await editMessage(deps, {
+      chat: CHAT_ID,
+      message_id: MESSAGE_ID,
+      new_text: 'привет @Иван',
+      mentions: ['Иван'],
+    })) as EditMessageDraft;
+
+    expect(draft.will_text_preview).toBe('привет @Иван');
+    expect(draft.next_step).toContain('эхом возвращайте will_text, а не will_text_preview');
+  });
+
+  it('will_text_preview отсутствует, когда названный запрос в тексте не встретился', async () => {
+    ivanFound();
+
+    const draft = (await editMessage(deps, {
+      chat: CHAT_ID,
+      message_id: MESSAGE_ID,
+      new_text: 'новый текст',
+      mentions: ['Иван'],
+    })) as EditMessageDraft;
+
+    expect(draft.will_text).toBe('новый текст');
+    expect(draft).not.toHaveProperty('will_text_preview');
+    expect(draft.next_step).not.toContain('will_text_preview');
+    /* Состав всё равно заявлен и уедет на провод, даже если в тексте его не видно */
+    expect(draft.mentions).toEqual([{ guid: PARTNER_GUID, name: 'Иван' }]);
   });
 });
 
