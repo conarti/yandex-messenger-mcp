@@ -1,3 +1,17 @@
+# [0.4.0](https://github.com/conarti/yandex-messenger-mcp/compare/v0.3.1...v0.4.0) (2026-08-28)
+
+
+### Features
+
+* обогащение выдачи search и состав упоминаний при правке ([#26](https://github.com/conarti/yandex-messenger-mcp/issues/26)) ([ebac68c](https://github.com/conarti/yandex-messenger-mcp/commit/ebac68ca337f65be480333008e77613d7defe43a)), closes [#15](https://github.com/conarti/yandex-messenger-mcp/issues/15)
+
+
+### BREAKING CHANGES
+
+* search.messages теперь несёт ключи обогащения - reads, mentions,
+reactions, thread, forwarded, from_me. Прежние v1-поля не изменились. Вызывающий,
+который строго сверял форму элемента выдачи поиска, увидит новые ключи.
+
 ## [0.3.1](https://github.com/conarti/yandex-messenger-mcp/compare/v0.3.0...v0.3.1) (2026-08-28)
 
 
