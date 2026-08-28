@@ -17,7 +17,7 @@
  * (guid принадлежит верному человеку, `MentionedUserIds` верен) и лучше, чем лишить названного
  * человека пинга отказом от подстановки.
  */
-import type { MentionCandidate } from './resolveMention.js';
+import { MENTION_GUID, MENTION_GUID_LENGTH, type MentionCandidate } from './resolveMention.js';
 
 /** Пара «исходный запрос упоминания -> резолвнутый guid». Собирается МИМО дедупа по guid */
 export interface MentionPair {
@@ -31,15 +31,6 @@ export interface MentionSubstitution {
   /** Сколько участков заменено. Ноль означает «подставлять было нечего», а не ошибку */
   substituted: number;
 }
-
-/**
- * guid упоминания: 36 символов `[0-9a-f-]` (§5), строго нижний регистр, флаг `i` не ставится
- * намеренно. Длина - первична, регулярка собирается из неё: раньше число и шаблон были двумя
- * независимыми объявлениями одного факта и разъехались бы молча.
- * Экспортируется, чтобы `sendMessage.ts` не заводил третью копию того же шаблона.
- */
-const MENTION_GUID_LENGTH = 36;
-export const MENTION_GUID = new RegExp(`^[0-9a-f-]{${MENTION_GUID_LENGTH}}$`);
 
 /**
  * Символ, продолжающий токен: буква ЛЮБОГО алфавита, цифра, `_` или `-`. Флаг `u` обязателен -

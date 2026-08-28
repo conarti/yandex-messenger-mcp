@@ -21,13 +21,8 @@
  */
 import { resolveChat, type ChatCandidate } from '../../chat/resolveChat.js';
 import { buildChatResolveFailure, type ChatResolveFailure } from '../../chat/resolveFailure.js';
-import { resolveMention, type MentionCandidate } from '../../chat/resolveMention.js';
-import {
-  MENTION_GUID,
-  renderMentionNames,
-  substituteMentionTokens,
-  type MentionPair,
-} from '../../chat/mentionTokens.js';
+import { MENTION_GUID, resolveMention, type MentionCandidate } from '../../chat/resolveMention.js';
+import { renderMentionNames, substituteMentionTokens, type MentionPair } from '../../chat/mentionTokens.js';
 import {
   ConfirmRejectedError,
   encodeToken,

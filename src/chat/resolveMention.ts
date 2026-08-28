@@ -23,7 +23,8 @@ import { asObject, stringOr } from '../util/json.js';
  * Регистр строго нижний: guid - lowercase UUID (§5), заглавный на проводе не встречается. Флаг
  * `i` намеренно НЕ ставится - иначе заглавный hex прошёл бы валидацию и ушёл на провод как есть.
  */
-const MENTION_GUID = /^[0-9a-f-]{36}$/;
+export const MENTION_GUID_LENGTH = 36;
+export const MENTION_GUID = new RegExp(`^[0-9a-f-]{${MENTION_GUID_LENGTH}}$`);
 /** Приватный чат: `<guidA>_<guidB>` (§5). Половины - те же lowercase-guid, флаг регистра не нужен */
 const PRIVATE_CHAT_ID = /^[0-9a-f-]{36}_[0-9a-f-]{36}$/;
 
