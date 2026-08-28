@@ -34,7 +34,6 @@ import { resolveMentions, type MentionResolveFailure } from '../../chat/resolveM
 import { renderMentionNames, substituteMentionTokens } from '../../chat/mentionTokens.js';
 import {
   assertMentionGuids,
-  ConfirmRejectedError,
   encodeToken,
   fingerprint,
   recallResult,
