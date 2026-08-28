@@ -419,7 +419,7 @@ describe('get_message: код 4 на message_info НЕ подменяется о
 });
 
 describe('search', () => {
-  it('сообщения нормализуются той же схемой, что и в get_history', async () => {
+  it('сообщения обогащаются той же схемой, что и в get_history', async () => {
     const { deps } = makeDeps({
       httpCall: async () => ({
         messages: {
@@ -436,7 +436,41 @@ describe('search', () => {
     expect(result.messages).toHaveLength(1);
     expect(result.messages?.[0]?.text).toBe('найденное');
     expect(result.messages?.[0]?.timestamp_mcs).toBe('1784117592261029');
+    /* Ключи обогащения на месте: выдача поиска не голый v1-объект */
+    expect(result.messages?.[0]).toMatchObject({
+      from_me: false,
+      reads: { tracked: false },
+      mentions: [],
+      reactions: [],
+      thread: { has_thread: false },
+      forwarded: [],
+    });
     expect(result.truncated).toBe(false);
+  });
+
+  /* Прямой регресс на остаток #22: сиблинг приезжал, но выдача поиска его не читала */
+  it('сиблинг ForwardedMessages в бакете messages даёт непустой forwarded[]', async () => {
+    const original = message(1784117000000000, 'оригинал').ServerMessage;
+    const withForward = {
+      ...message(1784117592261029, '').ServerMessage,
+      ForwardedMessages: [original],
+    };
+    const { deps } = makeDeps({
+      httpCall: async () => ({ messages: { items: [{ data: withForward }], total: 1, limit: 50 } }),
+    });
+
+    const result = await search(deps, { query: 'x', entities: ['messages'] });
+
+    expect(result.messages?.[0]?.forwarded).toEqual([
+      {
+        source_author: { guid: 'bbbbbbbb-5555-6666-7777-888888888888', name: 'Собеседник' },
+        source_chat: CHAT_ID,
+        source_date: '2026-07-15T12:03:20.000Z',
+        source_date_mcs: '1784117000000000',
+        source_text: 'оригинал',
+        attachments: [],
+      },
+    ]);
   });
 
   it('users и chats сводятся к плоским хитам', async () => {
@@ -457,14 +491,14 @@ describe('search', () => {
     expect(result.chats).toEqual([{ chat_id: '0/0/x', name: 'Команда', members_count: 3 }]);
   });
 
-  it('entities без users не тянет getWhoami: своего guid для сообщений не нужно', async () => {
+  it('entities с messages тянет getWhoami: без него не посчитать from_me', async () => {
     const { deps, getWhoami } = makeDeps({
       httpCall: async () => ({ messages: { items: [], total: 0, limit: 50 } }),
     });
 
     await search(deps, { query: 'x', entities: ['messages'] });
 
-    expect(getWhoami).not.toHaveBeenCalled();
+    expect(getWhoami).toHaveBeenCalledTimes(1);
   });
 
   it('entities с users тянет getWhoami: без него chat_id для человека не собрать', async () => {
@@ -475,6 +509,29 @@ describe('search', () => {
     await search(deps, { query: 'x', entities: ['users'] });
 
     expect(getWhoami).toHaveBeenCalledTimes(1);
+  });
+
+  it('messages и users вместе тянут getWhoami ровно один раз', async () => {
+    const { deps, getWhoami } = makeDeps({
+      httpCall: async () => ({
+        messages: { items: [{ data: message(1784117592261029, 'т').ServerMessage }], total: 1, limit: 50 },
+        users: { items: [{ data: { guid: 'g1' } }], total: 1, limit: 50 },
+      }),
+    });
+
+    await search(deps, { query: 'x', entities: ['messages', 'users'] });
+
+    expect(getWhoami).toHaveBeenCalledTimes(1);
+  });
+
+  it('entities без messages и users не тянет getWhoami', async () => {
+    const { deps, getWhoami } = makeDeps({
+      httpCall: async () => ({ chats: { items: [], total: 0, limit: 50 } }),
+    });
+
+    await search(deps, { query: 'x', entities: ['chats'] });
+
+    expect(getWhoami).not.toHaveBeenCalled();
   });
 
   it('эскалация сюрфейсится наружу', async () => {

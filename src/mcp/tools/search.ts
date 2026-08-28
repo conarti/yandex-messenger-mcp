@@ -4,14 +4,17 @@
  * Полнота набора обеспечивается ЭСКАЛАЦИЕЙ `limit` (§17.5) - см. protocol/search.ts.
  * Усечение (упор в потолок) сюрфейсится наружу полем `truncated`, а не замалчивается.
  *
- * Элементы бакета `messages` приходят как `{data:{ClientMessage, ServerMessageInfo}}` -
- * это ровно та форма, которую нормализует messageShape (живой захват 2026-07-17),
- * поэтому поисковые сообщения имеют ту же схему, что и сообщения из get_history.
+ * Элементы бакета `messages` приходят как `{data:{ClientMessage, MentionedUsers,
+ * ServerMessageInfo}}` - `item.data` играет роль `ServerMessage` из истории и несёт те же
+ * сиблинги (живой захват). Поэтому поисковые сообщения проходят то же ОБОГАЩЕНИЕ
+ * (`enrichMessage`), что и `get_history`: без него реакции, упоминания и пересылки
+ * молча терялись, хотя данные для них уже приезжали в ответе (#22).
  */
 import { buildPrivateChatId } from '../../chat/resolveChat.js';
 import type { SearchEntity } from '../../config/defaults.js';
+import { enrichMessage, type EnrichedMessage } from '../../protocol/enrichMessage.js';
 import { searchWithEscalation } from '../../protocol/search.js';
-import { normalizeMessage, type Message } from '../../protocol/messageShape.js';
+import { normalizeMessage } from '../../protocol/messageShape.js';
 import { asObject, stringOr } from '../../util/json.js';
 import type { ToolDeps } from './deps.js';
 
@@ -42,7 +45,8 @@ export interface ChatHit {
 }
 
 export interface SearchResult {
-  messages?: Message[];
+  /** Обогащённые сообщения - та же форма, что у `get_history`, а не голый v1-объект */
+  messages?: EnrichedMessage[];
   users?: UserHit[];
   chats?: ChatHit[];
   /** Как отработала эскалация: стартовый limit, финальный, сколько запросов ушло */
@@ -97,14 +101,28 @@ export async function search(deps: ToolDeps, input: SearchInput): Promise<Search
     ...(outcome.truncationReason !== undefined ? { truncation_reason: outcome.truncationReason } : {}),
   };
 
-  if (entities.includes('messages')) {
+  const wantsMessages = entities.includes('messages');
+  const wantsUsers = entities.includes('users');
+  /*
+   * Свой guid нужен обеим веткам - сообщениям для `from_me`, людям для конструирования
+   * chat_id (§5), - поэтому берётся ОДИН раз на весь вызов, а не по разу на ветку.
+   * Когда ни та, ни другая не запрошены, лишнего похода за whoami не случается.
+   */
+  const myGuid = wantsMessages || wantsUsers ? (await deps.auth.getWhoami()).guid : undefined;
+
+  if (wantsMessages && myGuid !== undefined) {
     result.messages = (outcome.buckets['messages'] ?? [])
-      .map((item) => normalizeMessage(asObject(item)?.['data']))
-      .filter((message): message is Message => message !== undefined);
+      .map((item) => {
+        /* `item.data` - тот же конверт, что `ServerMessage` в истории: и база, и сиблинги */
+        const siblings = asObject(item)?.['data'];
+        const base = normalizeMessage(siblings);
+        return base === undefined
+          ? undefined
+          : enrichMessage(base, { myGuid, reactionMap: deps.reactionMap, siblings });
+      })
+      .filter((message): message is EnrichedMessage => message !== undefined);
   }
-  if (entities.includes('users')) {
-    /* Свой guid нужен только тут - конструировать chat_id для найденного человека (§5) */
-    const { guid: myGuid } = await deps.auth.getWhoami();
+  if (wantsUsers && myGuid !== undefined) {
     result.users = (outcome.buckets['users'] ?? [])
       .map((item) => toUserHit(item, myGuid))
       .filter((hit): hit is UserHit => hit !== undefined);
